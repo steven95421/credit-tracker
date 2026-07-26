@@ -1,0 +1,176 @@
+{
+  "_comment": "Benefit catalog for Steven's ACTUAL cards (roster confirmed 2026-06-20; amounts cross-checked against the 美卡報銷 Google Sheet, verified 2026-06-20). 2025-refresh Amex Platinum ($895) has 10 statement credits — ALL require enrollment in the Amex app. period: monthly | quarterly | semiannual | annual. match.merchants = case-insensitive substrings tested against transaction merchant_name/name; match.categories = Plaid personal_finance_category.primary (TRAVEL, FOOD_AND_DRINK, TRANSPORTATION, ENTERTAINMENT, GENERAL_MERCHANDISE). Empty match => manual-only (track by hand). anchor (optional, for annual) = {\"month\":1-12,\"day\":1-31}: use it for cardmember-anniversary credits — set it to YOUR account's anniversary; without it, annual defaults to the calendar year.",
+  "products": [
+    {
+      "key": "amex_platinum",
+      "name": "American Express Platinum",
+      "issuer": "American Express",
+      "benefits": [
+        {
+          "id": "amex_plat_uber",
+          "name": "Uber Cash",
+          "amount": 15,
+          "period": "monthly",
+          "notes": "$15/mo Uber Cash (+$20 bonus in December = $35). Add the card to your Uber wallet; covers Uber rides & Uber Eats. Enrollment required.",
+          "match": { "merchants": ["uber"], "categories": [] }
+        },
+        {
+          "id": "amex_plat_digital_ent",
+          "name": "Digital Entertainment Credit",
+          "amount": 25,
+          "period": "monthly",
+          "notes": "Up to $25/mo on eligible: YouTube Premium/TV, Disney+, Hulu, ESPN+, Peacock, NYT, WSJ. Enrollment required.",
+          "match": { "merchants": ["youtube", "disney", "hulu", "espn", "peacock", "nytimes", "new york times", "wall street journal", "wsj", "audible", "siriusxm"], "categories": [] }
+        },
+        {
+          "id": "amex_plat_walmart_plus",
+          "name": "Walmart+ Membership Credit",
+          "amount": 12.95,
+          "period": "monthly",
+          "notes": "Covers the $12.95/mo Walmart+ membership (pay with the card). Enrollment required.",
+          "match": { "merchants": ["walmart+", "walmart plus", "wmt plus"], "categories": [] }
+        },
+        {
+          "id": "amex_plat_resy",
+          "name": "Resy Dining Credit",
+          "amount": 100,
+          "period": "quarterly",
+          "notes": "Up to $100/quarter at Resy restaurants (US). Enrollment required. Posts under the restaurant name, so verify manually.",
+          "match": { "merchants": ["resy"], "categories": [] }
+        },
+        {
+          "id": "amex_plat_lululemon",
+          "name": "Lululemon Credit",
+          "amount": 75,
+          "period": "quarterly",
+          "notes": "Up to $75/quarter at Lululemon. Enrollment required.",
+          "match": { "merchants": ["lululemon"], "categories": [] }
+        },
+        {
+          "id": "amex_plat_fhr",
+          "name": "FHR Hotel Credit",
+          "amount": 300,
+          "period": "semiannual",
+          "notes": "Up to $300 (Jan–Jun) and $300 (Jul–Dec) on Fine Hotels + Resorts / The Hotel Collection prepaid bookings via Amex Travel. H1 deadline 6/30 — easy to miss. Enrollment required. Posts via Amex Travel, so verify manually.",
+          "match": { "merchants": [], "categories": [] }
+        },
+        {
+          "id": "amex_plat_airline",
+          "name": "Airline Fee Credit",
+          "amount": 200,
+          "period": "annual",
+          "notes": "Up to $200/yr in incidental fees (bags, seats) with ONE selected airline. Calendar year. Enrollment required.",
+          "match": { "merchants": [], "categories": ["TRAVEL"] }
+        },
+        {
+          "id": "amex_plat_uber_one",
+          "name": "Uber One Membership Credit",
+          "amount": 120,
+          "period": "annual",
+          "notes": "Up to $120/yr covering Uber One membership. Calendar year. Enrollment required.",
+          "match": { "merchants": ["uber one"], "categories": [] }
+        },
+        {
+          "id": "amex_plat_clear",
+          "name": "CLEAR+ Credit",
+          "amount": 209,
+          "period": "annual",
+          "notes": "Up to $209/yr covering a CLEAR+ membership. Calendar year. Enrollment required.",
+          "match": { "merchants": ["clear secure", "clearme"], "categories": [] }
+        },
+        {
+          "id": "amex_plat_oura",
+          "name": "Oura Ring Credit",
+          "amount": 200,
+          "period": "annual",
+          "notes": "Up to $200/yr toward an Oura Ring. Calendar year. Enrollment required.",
+          "match": { "merchants": ["oura"], "categories": [] }
+        }
+      ]
+    },
+    {
+      "key": "hilton_aspire",
+      "name": "Hilton Honors Aspire",
+      "issuer": "American Express",
+      "benefits": [
+        {
+          "id": "hilton_aspire_resort",
+          "name": "Hilton Resort Credit",
+          "amount": 200,
+          "period": "semiannual",
+          "notes": "Up to $200 (Jan–Jun) and $200 (Jul–Dec) at participating Hilton resorts.",
+          "match": { "merchants": ["hilton", "waldorf", "conrad", "canopy", "curio", "lxr"], "categories": [] }
+        },
+        {
+          "id": "hilton_aspire_flight",
+          "name": "Airline Flight Credit",
+          "amount": 50,
+          "period": "quarterly",
+          "notes": "Up to $50/quarter on eligible flight purchases booked directly with airlines or via amextravel.com.",
+          "match": { "merchants": ["airline", "airways", "delta", "united", "american air", "alaska air", "jetblue", "southwest"], "categories": [] }
+        }
+      ]
+    },
+    {
+      "key": "amex_bonvoy_brilliant",
+      "name": "Marriott Bonvoy Brilliant",
+      "issuer": "American Express",
+      "benefits": [
+        {
+          "id": "bonvoy_brilliant_dining",
+          "name": "Dining Credit",
+          "amount": 25,
+          "period": "monthly",
+          "notes": "Up to $25/mo at restaurants worldwide ($300/yr total). Enrollment required.",
+          "match": { "merchants": [], "categories": ["FOOD_AND_DRINK"] }
+        }
+      ]
+    },
+    {
+      "key": "citi_strata_premier",
+      "name": "Citi Strata Premier",
+      "issuer": "Citi",
+      "benefits": [
+        {
+          "id": "citi_premier_hotel",
+          "name": "Hotel Credit",
+          "amount": 100,
+          "period": "annual",
+          "notes": "$100 off a single hotel stay of $500+ (pre-tax) booked via thankyou.com. Calendar year.",
+          "match": { "merchants": [], "categories": [] }
+        }
+      ]
+    },
+    {
+      "key": "citi_strata_elite",
+      "name": "Citi Strata Elite",
+      "issuer": "Citi",
+      "benefits": [
+        {
+          "id": "citi_elite_hotel",
+          "name": "Hotel Credit",
+          "amount": 300,
+          "period": "annual",
+          "notes": "Up to $300/calendar year on 2+ night hotel bookings via thankyou.com.",
+          "match": { "merchants": [], "categories": [] }
+        },
+        {
+          "id": "citi_elite_splurge",
+          "name": "Splurge Credit",
+          "amount": 200,
+          "period": "annual",
+          "notes": "Up to $200/calendar year at a selected merchant (Best Buy, American Airlines, Live Nation, 1stDibs, etc.).",
+          "match": { "merchants": ["best buy", "american airlines", "live nation", "1stdibs"], "categories": [] }
+        },
+        {
+          "id": "citi_elite_blacklane",
+          "name": "Blacklane Credit",
+          "amount": 100,
+          "period": "semiannual",
+          "notes": "Up to $100 (Jan–Jun) and $100 (Jul–Dec) on Blacklane chauffeur service.",
+          "match": { "merchants": ["blacklane"], "categories": [] }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+node_modules/
+client/node_modules/
+client/dist/
+server/data/*.db
+server/data/*.db-*
+.env
+.env.local
+client/.env
+client/.env.local
+worker/.dev.vars*
+worker/.wrangler/
+worker/seed.sql
+.wrangler/
+*.log
+.DS_Store

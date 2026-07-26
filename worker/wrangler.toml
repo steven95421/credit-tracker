@@ -1,0 +1,39 @@
+# Cloudflare Worker config — the cloud API + D1 database behind the GitHub Pages UI.
+# Free tier is plenty: 100k req/day, D1 5GB, cron triggers included. No card required.
+name = "credit-tracker-api"
+main = "src/index.js"
+compatibility_date = "2026-07-01"
+
+# Daily auto-sync of Plaid transactions, 13:00 UTC ≈ 6am PT.
+[triggers]
+crons = ["0 13 * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "credit-tracker"
+# Run `npx wrangler d1 create credit-tracker` once and paste the printed id here:
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[vars]
+# sandbox | production
+PLAID_ENV = "sandbox"
+PLAID_COUNTRY_CODES = "US"
+PLAID_PRODUCTS = "transactions"
+# Comma-separated browser origins allowed to call this API (no trailing slash):
+#   your GitHub Pages origin + local dev.
+ALLOWED_ORIGINS = "https://REPLACE_GITHUB_USERNAME.github.io,http://localhost:5173"
+# Only this Google account may log in (comma-separate to allow more). The repo is public
+# on GitHub — if you'd rather not expose the address, leave the placeholder and run
+# `npx wrangler secret put ALLOWED_EMAIL` instead (then delete this line).
+ALLOWED_EMAIL = "REPLACE_WITH_YOUR_GMAIL"
+# OAuth 2.0 Web client ID from Google Cloud console (not secret):
+GOOGLE_CLIENT_ID = "REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID"
+# Session lifetime in days:
+SESSION_TTL_DAYS = "30"
+# Uncomment once registered in the Plaid dashboard (needed for OAuth banks like Amex/Citi/Chase):
+# PLAID_REDIRECT_URI = "https://REPLACE_GITHUB_USERNAME.github.io/credit-tracker/"
+
+# Secrets — set these with `npx wrangler secret put <NAME>`, never in this file:
+#   PLAID_CLIENT_ID   (from dashboard.plaid.com/developers/keys)
+#   PLAID_SECRET      (same page; use the secret matching PLAID_ENV)
+#   SESSION_SECRET    (any long random string, e.g. `openssl rand -hex 32`)

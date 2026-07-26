@@ -1,0 +1,24 @@
+{
+  "name": "credit-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted personal app that tracks unused credit-card statement credits via Plaid.",
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,green \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "node --watch server/src/index.js",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm --prefix client run build",
+    "start": "node server/src/index.js",
+    "setup": "npm install && npm --prefix client install"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "plaid": "^36.0.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0"
+  }
+}

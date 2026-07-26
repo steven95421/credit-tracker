@@ -25,7 +25,7 @@ ALLOWED_ORIGINS = "https://steven95421.github.io,http://localhost:5173"
 #   npx wrangler secret put ALLOWED_EMAIL
 # (kept out of this file so the public repo doesn't expose the address)
 # OAuth 2.0 Web client ID from Google Cloud console (client IDs are public by design):
-GOOGLE_CLIENT_ID = "937221315014-313s0hp6qv1841an5k2n7sjlosp3k1ej.apps.googleusercontent.com"
+GOOGLE_CLIENT_ID = "937221315014-eo5i7t9ard82tnvblk7sklfq8j5u1rl8.apps.googleusercontent.com"
 # Session lifetime in days:
 SESSION_TTL_DAYS = "30"
 # Uncomment once registered in the Plaid dashboard (needed for OAuth banks like Amex/Citi/Chase):

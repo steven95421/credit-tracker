@@ -221,7 +221,7 @@ export default {
     const { status = 200, ...rest } = body || {};
     return new Response(JSON.stringify(rest), {
       status,
-      headers: { 'Content-Type': 'application/json', ...cors },
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...cors },
     });
   },
 

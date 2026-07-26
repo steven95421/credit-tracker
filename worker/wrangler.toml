@@ -11,8 +11,7 @@ crons = ["0 13 * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "credit-tracker"
-# Run `npx wrangler d1 create credit-tracker` once and paste the printed id here:
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "6e28f89a-1246-4f4f-9cff-4933b96506cd"
 
 [vars]
 # sandbox | production
@@ -21,11 +20,10 @@ PLAID_COUNTRY_CODES = "US"
 PLAID_PRODUCTS = "transactions"
 # Comma-separated browser origins allowed to call this API (no trailing slash):
 #   your GitHub Pages origin + local dev.
-ALLOWED_ORIGINS = "https://REPLACE_GITHUB_USERNAME.github.io,http://localhost:5173"
-# Only this Google account may log in (comma-separate to allow more). The repo is public
-# on GitHub — if you'd rather not expose the address, leave the placeholder and run
-# `npx wrangler secret put ALLOWED_EMAIL` instead (then delete this line).
-ALLOWED_EMAIL = "REPLACE_WITH_YOUR_GMAIL"
+ALLOWED_ORIGINS = "https://steven95421.github.io,http://localhost:5173"
+# ALLOWED_EMAIL (who may log in) is a wrangler secret — set via:
+#   npx wrangler secret put ALLOWED_EMAIL
+# (kept out of this file so the public repo doesn't expose the address)
 # OAuth 2.0 Web client ID from Google Cloud console (not secret):
 GOOGLE_CLIENT_ID = "REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID"
 # Session lifetime in days:

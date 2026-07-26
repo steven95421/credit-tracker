@@ -41,7 +41,10 @@ async function handle(req, env) {
       today: todayYMD(),
       authRequired: !devMode(env),
       authed: await isAuthed(env, req),
-      googleClientId: env.GOOGLE_CLIENT_ID || '',
+      // only hand the UI a real client id (placeholder would render a broken Google button)
+      googleClientId: (env.GOOGLE_CLIENT_ID || '').endsWith('.apps.googleusercontent.com')
+        ? env.GOOGLE_CLIENT_ID
+        : '',
     };
   }
 

@@ -542,12 +542,6 @@ export default function CardsAccounts({ config, onChange }) {
             remain available, but a completed refresh will not import immediately.
           </div>
         )}
-        {stripeConfig?.configured && (
-          <div className="muted small">
-            Stripe supplies a bank description but no structured merchant, category, or MCC for these transactions;
-            automatic benefit matches may need manual confirmation.
-          </div>
-        )}
         {!tellerConfig?.configured && (
           <div className="muted small">Teller is not configured. Stripe, Plaid, CSV, and manual tracking remain available.</div>
         )}
@@ -597,7 +591,6 @@ export default function CardsAccounts({ config, onChange }) {
             {item.capabilityWarning && <div className="warning-box">⚠ {item.capabilityWarning}</div>}
             {item.subscriptionWarning && <div className="warning-box">⚠ {item.subscriptionWarning}</div>}
             {item.accountWarning && <div className="warning-box">⚠ {item.accountWarning}</div>}
-            {item.dataQualityWarning && <div className="warning-box">⚠ {item.dataQualityWarning}</div>}
             {item.provider === 'stripe' && (
               <StripeSignControl item={item} busy={busy} onChange={changeStripeSign} />
             )}

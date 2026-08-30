@@ -124,6 +124,7 @@ export const q = {
   ),
   listCards: db.prepare(`SELECT * FROM cards ORDER BY created_at`),
   getCard: db.prepare(`SELECT * FROM cards WHERE id = ?`),
+  updateCardProduct: db.prepare(`UPDATE cards SET product_key = ? WHERE id = ?`),
   deleteCard: db.prepare(`DELETE FROM cards WHERE id = ?`),
 
   getOverride: db.prepare(

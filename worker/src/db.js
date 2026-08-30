@@ -174,6 +174,8 @@ export const getCardByAccount = (DB, accountId) =>
   DB.prepare('SELECT * FROM cards WHERE account_id = ?').bind(accountId).first();
 export const updateCardAccount = (DB, id, accountId) =>
   DB.prepare('UPDATE cards SET account_id = ? WHERE id = ?').bind(accountId, id).run();
+export const updateCardProduct = (DB, id, productKey) =>
+  DB.prepare('UPDATE cards SET product_key = ? WHERE id = ?').bind(productKey, id).run();
 export const deleteCard = (DB, id) => DB.prepare('DELETE FROM cards WHERE id = ?').bind(id).run();
 export const unlinkCardsOfAccounts = (DB, itemId) =>
   DB.prepare(

@@ -133,6 +133,18 @@ app.post('/api/cards', wrap(async (req, res) => {
   res.json({ id: Number(info.lastInsertRowid) });
 }));
 
+app.patch('/api/cards/:id', wrap(async (req, res) => {
+  const cardId = Number(req.params.id);
+  const { productKey } = req.body || {};
+  if (!productKey) return res.status(400).json({ error: 'productKey required' });
+  if (!loadCatalog().some((product) => product.key === productKey)) {
+    return res.status(400).json({ error: `unknown productKey: ${productKey}` });
+  }
+  if (!q.getCard.get(cardId)) return res.status(404).json({ error: 'card not found' });
+  q.updateCardProduct.run(productKey, cardId);
+  res.json({ ok: true });
+}));
+
 app.delete('/api/cards/:id', wrap(async (req, res) => {
   q.deleteCard.run(Number(req.params.id));
   res.json({ ok: true });

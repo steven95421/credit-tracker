@@ -4,6 +4,7 @@ import { usePlaidLink } from 'react-plaid-link';
 import { useTellerConnect } from 'teller-connect-react';
 import { api } from '../api.js';
 import {
+  automaticConnectedCardMatches,
   defaultTrackedCardName,
   groupLinkedInstitutions,
   partitionPendingAccounts,
@@ -203,6 +204,8 @@ export default function CardsAccounts({ config, onChange }) {
   const [samples, setSamples] = useState({});
   const [pendingProducts, setPendingProducts] = useState({});
   const [deferredSetupIds, setDeferredSetupIds] = useState(loadDeferredSetupIds);
+  const [autoMatchFailures, setAutoMatchFailures] = useState(new Set());
+  const autoMatchAttempts = useRef(new Set());
   const setupFocusTargets = useRef(new Map());
   const setupFocusRequest = useRef(null);
 
@@ -266,6 +269,54 @@ export default function CardsAccounts({ config, onChange }) {
     await onChange();
   }, [reload, onChange]);
 
+  useEffect(() => {
+    const unmatched = unmappedConnectedAccounts(accounts, cards);
+    const unmatchedIds = new Set(unmatched.map((account) => account.account_id));
+    for (const accountId of autoMatchAttempts.current) {
+      if (!unmatchedIds.has(accountId)) autoMatchAttempts.current.delete(accountId);
+    }
+    setAutoMatchFailures((current) => {
+      const next = new Set([...current].filter((accountId) => unmatchedIds.has(accountId)));
+      return next.size === current.size ? current : next;
+    });
+
+    const matches = automaticConnectedCardMatches(accounts, cards, items, catalog)
+      .filter(({ account }) => !autoMatchAttempts.current.has(account.account_id));
+    if (matches.length === 0) return;
+    for (const { account } of matches) autoMatchAttempts.current.add(account.account_id);
+
+    void (async () => {
+      let shouldReload = false;
+      let matchedCount = 0;
+      const failedIds = [];
+      for (const { account, item, product } of matches) {
+        try {
+          await api.post('/api/cards', {
+            accountId: account.account_id,
+            productKey: product.key,
+            displayName: defaultTrackedCardName(account, item),
+          });
+          matchedCount += 1;
+          shouldReload = true;
+        } catch (error) {
+          if (error.status === 409) shouldReload = true;
+          else failedIds.push(account.account_id);
+        }
+      }
+      if (failedIds.length > 0) {
+        setAutoMatchFailures((current) => new Set([...current, ...failedIds]));
+        setErr('Some connected cards could not be matched automatically. Review the remaining cards below.');
+      }
+      if (matchedCount > 0) {
+        setMessage(
+          `Automatically matched ${matchedCount} connected card${matchedCount === 1 ? '' : 's'}. `
+          + 'You can change the product under Tracked cards.'
+        );
+      }
+      if (shouldReload) await afterMutation();
+    })();
+  }, [accounts, cards, items, catalog, afterMutation]);
+
   const connectStripe = async () => {
     setBusy(true);
     setErr('');
@@ -286,7 +337,7 @@ export default function CardsAccounts({ config, onChange }) {
         sessionId: setup.sessionId,
       });
       const notes = [`Linked ${linked.accounts} Stripe credit-card account(s).`];
-      notes.push('Confirm each card product below to start tracking its benefits.');
+      notes.push('Card products are matched from account names automatically and remain editable under Tracked cards.');
       notes.push('Purchases default to a negative (−) amount; you can change this later per account.');
       if (linked.ignoredAccounts > 0) notes.push(`${linked.ignoredAccounts} unsupported or inactive account(s) were ignored.`);
       if (linked.refreshPending) notes.push('Stripe is preparing transaction history in the background.');
@@ -514,6 +565,22 @@ export default function CardsAccounts({ config, onChange }) {
     }
   };
 
+  const changeCardProduct = async (card, productKey) => {
+    if (!productKey || productKey === card.product_key) return;
+    setBusy(true);
+    setErr('');
+    try {
+      await api.patch(`/api/cards/${card.id}`, { productKey });
+      const product = catalog.find((entry) => entry.key === productKey);
+      setMessage(`${card.display_name || card.account?.name || 'Card'} now tracks ${product?.name || productKey}.`);
+      await afterMutation();
+    } catch (error) {
+      setErr(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const importCsv = async () => {
     if (!csvCardId || !csvFile) {
       setErr('Choose an eligible card and a CSV file');
@@ -543,7 +610,14 @@ export default function CardsAccounts({ config, onChange }) {
 
   const itemsById = new Map(items.map((item) => [item.itemId, item]));
   const institutionGroups = groupLinkedInstitutions(items);
-  const pendingAccounts = unmappedConnectedAccounts(accounts, cards);
+  const unmatchedAccounts = unmappedConnectedAccounts(accounts, cards);
+  const automaticMatchIds = new Set(
+    automaticConnectedCardMatches(accounts, cards, items, catalog)
+      .map(({ account }) => account.account_id)
+  );
+  const pendingAccounts = unmatchedAccounts.filter((account) => (
+    !automaticMatchIds.has(account.account_id) || autoMatchFailures.has(account.account_id)
+  ));
   const { active: activePendingAccounts, deferred: deferredPendingAccounts } = partitionPendingAccounts(
     pendingAccounts,
     deferredSetupIds
@@ -727,8 +801,8 @@ export default function CardsAccounts({ config, onChange }) {
             </div>
           </div>
           <div className="muted small pending-intro">
-            The bank connection identifies the account, but not the exact rewards product. Confirm the card product once;
-            transactions will stay linked automatically afterward.
+            These account names did not identify one card product confidently. Choose the product once;
+            transactions will stay linked automatically afterward, and you can change it later.
           </div>
           {activePendingAccounts.map((account) => {
             const item = itemsById.get(account.item_id);
@@ -912,8 +986,8 @@ export default function CardsAccounts({ config, onChange }) {
         <div className="card-head"><div className="name">Tracked cards</div></div>
         {cards.length === 0 && <div className="muted small">None yet.</div>}
         {cards.map((card) => (
-          <div className="acct row between" key={card.id}>
-            <div>
+          <div className="acct row between tracked-card-row" key={card.id}>
+            <div className="tracked-card-copy">
               <strong>{card.display_name || card.product_key}</strong>{' '}
               <span className="muted">
                 · {card.account
@@ -921,7 +995,20 @@ export default function CardsAccounts({ config, onChange }) {
                   : 'manual'}
               </span>
             </div>
-            <button className="btn danger" disabled={busy} onClick={() => deleteCard(card.id)}>Remove</button>
+            <div className="row tracked-card-actions">
+              <select
+                className="tracked-product-select"
+                value={card.product_key}
+                disabled={busy}
+                aria-label={`Card product for ${card.display_name || card.account?.name || 'tracked card'}`}
+                onChange={(event) => changeCardProduct(card, event.target.value)}
+              >
+                {catalog.map((product) => (
+                  <option key={product.key} value={product.key}>{product.name}</option>
+                ))}
+              </select>
+              <button className="btn danger" disabled={busy} onClick={() => deleteCard(card.id)}>Remove</button>
+            </div>
           </div>
         ))}
       </section>

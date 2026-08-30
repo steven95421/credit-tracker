@@ -262,6 +262,9 @@ select, .text-input {
   white-space: nowrap;
 }
 .deferred-setup-action { font-size: 12px; white-space: nowrap; }
+.tracked-card-copy { min-width: 0; }
+.tracked-card-actions { justify-content: flex-end; }
+.tracked-product-select { min-width: 220px; max-width: 100%; }
 
 @media (max-width: 620px) {
   .sample-row { grid-template-columns: 76px minmax(0, 1fr) auto; gap: 6px; }
@@ -269,6 +272,9 @@ select, .text-input {
   .pending-account { grid-template-columns: 1fr; }
   .pending-account-actions { justify-content: stretch; }
   .pending-account-actions .btn { flex: 1; }
+  .tracked-card-row { align-items: stretch; flex-direction: column; }
+  .tracked-card-actions { justify-content: stretch; }
+  .tracked-product-select { flex: 1; min-width: 0; }
 }
 
 .login {

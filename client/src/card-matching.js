@@ -23,12 +23,55 @@ const NON_GROUPABLE_INSTITUTION_NAMES = new Set([
   'unknown institution',
 ]);
 
+const GENERIC_PRODUCT_TOKENS = new Set([
+  'account',
+  'bank',
+  'card',
+  'consumer',
+  'credit',
+  'mastercard',
+  'personal',
+  'rewards',
+  'visa',
+]);
+
 const canonicalIssuer = (value) => {
   const normalized = normalizeName(value);
   for (const [issuer, aliases] of ISSUER_ALIASES) {
     if (aliases.includes(normalized)) return issuer;
   }
   return normalized;
+};
+
+const nameTokens = (value) => normalizeName(value).split(' ').filter(Boolean);
+
+const issuerTokens = (issuer) => {
+  const canonical = canonicalIssuer(issuer);
+  const aliases = ISSUER_ALIASES.get(canonical) || [canonical];
+  return new Set(aliases.flatMap(nameTokens));
+};
+
+const productIdentityTokens = (product) => {
+  const ignored = issuerTokens(product.issuer);
+  return [...new Set(nameTokens(product.name).filter((token) => (
+    !ignored.has(token) && !GENERIC_PRODUCT_TOKENS.has(token)
+  )))];
+};
+
+const sourceMentionsIssuer = (sourceTokens, issuer) => {
+  const canonical = canonicalIssuer(issuer);
+  const aliases = ISSUER_ALIASES.get(canonical) || [canonical];
+  return aliases.some((alias) => {
+    const tokens = nameTokens(alias);
+    return tokens.length > 0 && tokens.every((token) => sourceTokens.has(token));
+  });
+};
+
+const singleMostSpecific = (matches) => {
+  if (matches.length === 0) return null;
+  const maxTokens = Math.max(...matches.map((match) => match.identityTokens.length));
+  const mostSpecific = matches.filter((match) => match.identityTokens.length === maxTokens);
+  return mostSpecific.length === 1 ? mostSpecific[0].product : null;
 };
 
 const laterTimestamp = (current, candidate) => {
@@ -111,6 +154,45 @@ export function partitionProductsForInstitution(products, institutionName) {
   return { suggested, other };
 }
 
+export function matchProductForConnectedAccount(products, account, institutionName = '') {
+  const sourceTokens = new Set(nameTokens([
+    account?.name,
+    account?.official_name,
+    account?.officialName,
+    institutionName,
+  ].filter(Boolean).join(' ')));
+  if (sourceTokens.size === 0 || products.length === 0) return null;
+
+  const institutionIssuer = canonicalIssuer(institutionName);
+  let candidates = products.filter((product) => canonicalIssuer(product.issuer) === institutionIssuer);
+
+  if (candidates.length === 0) {
+    const mentionedIssuers = [...new Set(products
+      .map((product) => canonicalIssuer(product.issuer))
+      .filter((issuer) => sourceMentionsIssuer(sourceTokens, issuer)))];
+    candidates = mentionedIssuers.length === 1
+      ? products.filter((product) => canonicalIssuer(product.issuer) === mentionedIssuers[0])
+      : [];
+  }
+
+  const matches = candidates.map((product) => ({
+    product,
+    identityTokens: productIdentityTokens(product),
+  }));
+  const fullMatches = matches.filter(({ identityTokens }) => (
+    identityTokens.length > 0 && identityTokens.every((token) => sourceTokens.has(token))
+  ));
+  const fullMatch = singleMostSpecific(fullMatches);
+  if (fullMatch) return fullMatch;
+
+  // If this user's catalog has only one product for the connected issuer, use
+  // that roster entry as the default. The tracked card remains editable.
+  if (candidates.length === 1 && canonicalIssuer(candidates[0].issuer) === institutionIssuer) {
+    return candidates[0];
+  }
+  return null;
+}
+
 export function unmappedConnectedAccounts(accounts, cards) {
   const mappedAccountIds = new Set(cards.map((card) => card.account_id).filter(Boolean));
   return accounts.filter((account) => (
@@ -118,6 +200,15 @@ export function unmappedConnectedAccounts(accounts, cards) {
     && String(account.type || '').toLowerCase() === 'credit'
     && !mappedAccountIds.has(account.account_id)
   ));
+}
+
+export function automaticConnectedCardMatches(accounts, cards, items, products) {
+  const itemsById = new Map(items.map((item) => [item.itemId, item]));
+  return unmappedConnectedAccounts(accounts, cards).flatMap((account) => {
+    const item = itemsById.get(account.item_id) || null;
+    const product = matchProductForConnectedAccount(products, account, item?.institutionName || '');
+    return product ? [{ account, item, product }] : [];
+  });
 }
 
 export function prunePendingSelections(selections, pendingAccounts) {

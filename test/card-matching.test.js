@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  automaticConnectedCardMatches,
   defaultTrackedCardName,
   groupLinkedInstitutions,
+  matchProductForConnectedAccount,
   partitionPendingAccounts,
   partitionProductsForInstitution,
   pruneDeferredSetupIds,
@@ -11,9 +13,15 @@ import {
 } from '../client/src/card-matching.js';
 
 const products = [
-  { key: 'amex_platinum', issuer: 'American Express' },
-  { key: 'hilton_aspire', issuer: 'American Express' },
-  { key: 'citi_strata_premier', issuer: 'Citi' },
+  { key: 'amex_platinum', name: 'American Express Platinum', issuer: 'American Express' },
+  { key: 'hilton_aspire', name: 'Hilton Honors Aspire', issuer: 'American Express' },
+  { key: 'citi_strata_premier', name: 'Citi Strata Premier', issuer: 'Citi' },
+];
+
+const matchingProducts = [
+  ...products,
+  { key: 'amex_bonvoy_brilliant', name: 'Marriott Bonvoy Brilliant', issuer: 'American Express' },
+  { key: 'citi_strata_elite', name: 'Citi Strata Elite', issuer: 'Citi' },
 ];
 
 test('card products are suggested only when the institution issuer is unambiguous', () => {
@@ -38,6 +46,73 @@ test('card products are suggested only when the institution issuer is unambiguou
   const missing = partitionProductsForInstitution(products, '');
   assert.deepEqual(missing.suggested, []);
   assert.deepEqual(missing.other, products);
+});
+
+test('connected account product names match automatically when the result is unique', () => {
+  const cases = [
+    ['American Express Platinum Card', 'American Express National Bank', 'amex_platinum'],
+    ['Hilton Honors American Express Aspire Card', 'American Express', 'hilton_aspire'],
+    ['Marriott Bonvoy Brilliant® American Express® Card', 'American Express', 'amex_bonvoy_brilliant'],
+    ['Citi Strata Premier Card', 'Citibank, N.A.', 'citi_strata_premier'],
+    ['Citi Strata Elite Mastercard', '', 'citi_strata_elite'],
+  ];
+
+  for (const [accountName, institutionName, expectedKey] of cases) {
+    assert.equal(
+      matchProductForConnectedAccount(matchingProducts, { name: accountName }, institutionName)?.key,
+      expectedKey
+    );
+  }
+
+  assert.equal(
+    matchProductForConnectedAccount(matchingProducts, { name: 'Citi Credit Card' }, 'Citi'),
+    null
+  );
+  assert.equal(
+    matchProductForConnectedAccount(matchingProducts, { name: 'Citi Strata' }, 'Citi'),
+    null
+  );
+  assert.equal(
+    matchProductForConnectedAccount(
+      matchingProducts,
+      { name: 'Hilton Honors Surpass' },
+      'American Express'
+    ),
+    null
+  );
+  assert.equal(
+    matchProductForConnectedAccount(matchingProducts, { name: 'Platinum' }, 'Chase'),
+    null
+  );
+  assert.equal(
+    matchProductForConnectedAccount(
+      [matchingProducts[0]],
+      { name: 'Credit Card' },
+      'American Express'
+    )?.key,
+    'amex_platinum'
+  );
+});
+
+test('automatic matches skip accounts that already have a tracked card', () => {
+  const accounts = [
+    { account_id: 'stripe:platinum', item_id: 'item:amex', provider: 'stripe', type: 'credit', name: 'Platinum Card' },
+    { account_id: 'stripe:premier', item_id: 'item:citi', provider: 'stripe', type: 'credit', name: 'Citi Strata Premier' },
+  ];
+  const items = [
+    { itemId: 'item:amex', institutionName: 'American Express' },
+    { itemId: 'item:citi', institutionName: 'Citi' },
+  ];
+  const matches = automaticConnectedCardMatches(
+    accounts,
+    [{ account_id: 'stripe:platinum' }],
+    items,
+    matchingProducts
+  );
+
+  assert.deepEqual(matches.map(({ account, product }) => [account.account_id, product.key]), [
+    ['stripe:premier', 'citi_strata_premier'],
+  ]);
 });
 
 test('linked connections are grouped into one row per canonical institution', () => {

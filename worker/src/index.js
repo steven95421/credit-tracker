@@ -25,7 +25,7 @@ function corsHeaders(env, req) {
   const origin = req.headers.get('Origin') || '';
   const allowed = (env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
   const h = {
-    'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Authorization,Content-Type',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
@@ -674,6 +674,18 @@ async function handle(req, env, ctx) {
   }
 
   match = path.match(/^\/api\/cards\/(\d+)$/);
+  if (match && method === 'PATCH') {
+    const cardId = Number(match[1]);
+    const { productKey } = await readJson(req);
+    if (!productKey) return { status: 400, error: 'productKey required' };
+    if (!products.some((product) => product.key === productKey)) {
+      return { status: 400, error: `unknown productKey: ${productKey}` };
+    }
+    if (!(await db.getCard(env.DB, cardId))) return { status: 404, error: 'card not found' };
+    await db.updateCardProduct(env.DB, cardId, productKey);
+    return { ok: true };
+  }
+
   if (match && method === 'DELETE') {
     await db.deleteCard(env.DB, Number(match[1]));
     return { ok: true };

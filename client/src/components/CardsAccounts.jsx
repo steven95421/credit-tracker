@@ -166,29 +166,71 @@ function ProviderSignPanel({ item, sample, busy, onLoad, onConfirm, onAcknowledg
 function StripeSignControl({ item, busy, onChange }) {
   const current = item.chargeSign === 'positive' ? 'positive' : 'negative';
   return (
-    <div className="stripe-sign-setting">
-      <div className="muted small">
-        Stripe purchases default to a negative (−) amount. Change this only if purchases and refunds appear reversed.
+    <details className="stripe-sign-setting">
+      <summary className="stripe-sign-summary">
+        <span>Amount sign</span>
+        <strong>Purchases are {current === 'negative' ? '−' : '+'}</strong>
+        <span className="stripe-sign-chevron" aria-hidden="true">›</span>
+      </summary>
+      <div className="stripe-sign-body">
+        <div className="muted small">
+          Change this only if purchases and refunds appear reversed.
+        </div>
+        <div className="row sign-actions">
+          <button
+            className="btn"
+            disabled={busy || current === 'negative'}
+            aria-pressed={current === 'negative'}
+            onClick={() => onChange(item, 'negative')}
+          >
+            Purchases are − {current === 'negative' ? '(current)' : ''}
+          </button>
+          <button
+            className="btn"
+            disabled={busy || current === 'positive'}
+            aria-pressed={current === 'positive'}
+            onClick={() => onChange(item, 'positive')}
+          >
+            Purchases are + {current === 'positive' ? '(current)' : ''}
+          </button>
+        </div>
       </div>
-      <div className="row sign-actions">
-        <button
-          className="btn"
-          disabled={busy || current === 'negative'}
-          aria-pressed={current === 'negative'}
-          onClick={() => onChange(item, 'negative')}
+    </details>
+  );
+}
+
+function ConnectionStatusBadges({ item }) {
+  const statuses = [];
+  if (item.relinkRequired) {
+    statuses.push({
+      key: 'reconnect',
+      label: 'Reconnect required',
+    });
+  } else if (item.accountWarning) {
+    statuses.push({
+      key: 'disconnected',
+      label: 'Disconnected · reconnect or unlink',
+    });
+  }
+  if (item.subscriptionWarning) {
+    statuses.push({
+      key: 'refresh',
+      label: 'Daily refresh auto-retry',
+    });
+  }
+  if (statuses.length === 0) return null;
+
+  return (
+    <span className="connection-statuses">
+      {statuses.map((status) => (
+        <span
+          className={`badge connection-status-badge ${status.key}`}
+          key={status.key}
         >
-          Purchases are − {current === 'negative' ? '(current)' : ''}
-        </button>
-        <button
-          className="btn"
-          disabled={busy || current === 'positive'}
-          aria-pressed={current === 'positive'}
-          onClick={() => onChange(item, 'positive')}
-        >
-          Purchases are + {current === 'positive' ? '(current)' : ''}
-        </button>
-      </div>
-    </div>
+          {status.label}
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -934,8 +976,8 @@ export default function CardsAccounts({ config, onChange }) {
                 <strong>{group.institutionName} stopped syncing</strong>
                 <div className="muted small">
                   {group.reconnectRequiredCount} card{group.reconnectRequiredCount === 1 ? '' : 's'} need bank authorization again.
-                  Reconnect this bank authorization; existing card products and manual credit settings stay in place.
-                  If the cards were linked separately, repeat until this notice clears.
+                  {' '}Reconnect once; cards on the same authorization are repaired together. Repeat only if some remain.
+                  {' '}Card matches and credit settings are kept.
                 </div>
               </div>
               <div className="row stripe-reconnect-actions">
@@ -1013,6 +1055,7 @@ export default function CardsAccounts({ config, onChange }) {
                         <span className="muted small">
                           last synced: {formatLastSyncedAt(item.lastSyncedAt)}
                         </span>
+                        <ConnectionStatusBadges item={item} />
                       </div>
                       <div className="muted small institution-account-list">
                         {item.accounts.map((account) => (
@@ -1046,8 +1089,6 @@ export default function CardsAccounts({ config, onChange }) {
                     </div>
                   </div>
                   {item.capabilityWarning && <div className="warning-box">⚠ {item.capabilityWarning}</div>}
-                  {item.subscriptionWarning && <div className="warning-box">⚠ {item.subscriptionWarning}</div>}
-                  {item.accountWarning && <div className="warning-box">⚠ {item.accountWarning}</div>}
                   {item.provider === 'stripe' && (
                     <StripeSignControl item={item} busy={busy} onChange={changeStripeSign} />
                   )}

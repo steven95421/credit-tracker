@@ -5,13 +5,25 @@ import { useTellerConnect } from 'teller-connect-react';
 import { api } from '../api.js';
 import {
   defaultTrackedCardName,
+  partitionPendingAccounts,
   partitionProductsForInstitution,
+  pruneDeferredSetupIds,
   prunePendingSelections,
   unmappedConnectedAccounts,
 } from '../card-matching.js';
 import { parseCsvFile } from '../csv.js';
 
 const itemPath = (itemId, suffix = '') => `/api/items/${encodeURIComponent(itemId)}${suffix}`;
+const DEFERRED_SETUP_STORAGE_KEY = 'ct_deferred_card_setups';
+
+function loadDeferredSetupIds() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(DEFERRED_SETUP_STORAGE_KEY) || '[]');
+    return new Set(Array.isArray(stored) ? stored.filter((accountId) => typeof accountId === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
 
 function PlaidLinkButton({ onLinked, onError }) {
   // OAuth banks bounce the browser away and back with ?oauth_state_id=…;
@@ -176,6 +188,9 @@ export default function CardsAccounts({ config, onChange }) {
   const [tellerSetup, setTellerSetup] = useState(null);
   const [samples, setSamples] = useState({});
   const [pendingProducts, setPendingProducts] = useState({});
+  const [deferredSetupIds, setDeferredSetupIds] = useState(loadDeferredSetupIds);
+  const setupFocusTargets = useRef(new Map());
+  const setupFocusRequest = useRef(null);
 
   const [formAccount, setFormAccount] = useState('');
   const [formProduct, setFormProduct] = useState('');
@@ -206,6 +221,7 @@ export default function CardsAccounts({ config, onChange }) {
       setCatalog(catalogResult.products);
       const pending = unmappedConnectedAccounts(accountResult.accounts, cardResult.cards);
       setPendingProducts((current) => prunePendingSelections(current, pending));
+      setDeferredSetupIds((current) => pruneDeferredSetupIds(current, pending));
       setErr('');
     } catch (error) {
       setErr(error.message);
@@ -215,6 +231,21 @@ export default function CardsAccounts({ config, onChange }) {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DEFERRED_SETUP_STORAGE_KEY, JSON.stringify([...deferredSetupIds]));
+    } catch {
+      // Deferring setup still works for this page if browser storage is unavailable.
+    }
+  }, [deferredSetupIds]);
+
+  useEffect(() => {
+    const targetKey = setupFocusRequest.current;
+    if (!targetKey) return;
+    setupFocusRequest.current = null;
+    setupFocusTargets.current.get(targetKey)?.focus();
+  }, [deferredSetupIds]);
 
   const afterMutation = useCallback(async () => {
     await reload();
@@ -498,7 +529,21 @@ export default function CardsAccounts({ config, onChange }) {
 
   const itemsById = new Map(items.map((item) => [item.itemId, item]));
   const pendingAccounts = unmappedConnectedAccounts(accounts, cards);
+  const { active: activePendingAccounts, deferred: deferredPendingAccounts } = partitionPendingAccounts(
+    pendingAccounts,
+    deferredSetupIds
+  );
   const csvCards = cards.filter((card) => !card.account || card.account.provider === 'csv');
+
+  const setSetupDeferred = (accountId, deferred) => {
+    setupFocusRequest.current = `${deferred ? 'deferred' : 'active'}:${accountId}`;
+    setDeferredSetupIds((current) => {
+      const next = new Set(current);
+      if (deferred) next.add(accountId);
+      else next.delete(accountId);
+      return next;
+    });
+  };
 
   return (
     <>
@@ -612,13 +657,20 @@ export default function CardsAccounts({ config, onChange }) {
         <section className="card-section pending-card-section">
           <div className="card-head">
             <div className="name">Finish connected card setup</div>
-            <span className="badge open">{pendingAccounts.length} to confirm</span>
+            <div className="row pending-setup-counts">
+              {activePendingAccounts.length > 0 && (
+                <span className="badge open">{activePendingAccounts.length} to confirm</span>
+              )}
+              {deferredPendingAccounts.length > 0 && (
+                <span className="badge pending-later-badge">{deferredPendingAccounts.length} later</span>
+              )}
+            </div>
           </div>
           <div className="muted small pending-intro">
             The bank connection identifies the account, but not the exact rewards product. Confirm the card product once;
             transactions will stay linked automatically afterward.
           </div>
-          {pendingAccounts.map((account) => {
+          {activePendingAccounts.map((account) => {
             const item = itemsById.get(account.item_id);
             const institutionName = item?.institutionName || '';
             const { suggested, other } = partitionProductsForInstitution(catalog, institutionName);
@@ -638,6 +690,11 @@ export default function CardsAccounts({ config, onChange }) {
                   )}
                 </div>
                 <select
+                  ref={(node) => {
+                    const key = `active:${account.account_id}`;
+                    if (node) setupFocusTargets.current.set(key, node);
+                    else setupFocusTargets.current.delete(key);
+                  }}
                   className="pending-product-select"
                   aria-label={`Card product for ${account.name || institutionName || 'connected account'}`}
                   value={pendingProducts[account.account_id] || ''}
@@ -662,16 +719,64 @@ export default function CardsAccounts({ config, onChange }) {
                     </optgroup>
                   )}
                 </select>
-                <button
-                  className="btn primary"
-                  disabled={busy || !pendingProducts[account.account_id]}
-                  onClick={() => confirmConnectedCard(account, item)}
-                >
-                  Confirm &amp; track
-                </button>
+                <div className="pending-account-actions">
+                  <button
+                    className="btn primary"
+                    disabled={busy || !pendingProducts[account.account_id]}
+                    onClick={() => confirmConnectedCard(account, item)}
+                  >
+                    Confirm &amp; track
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy}
+                    onClick={() => setSetupDeferred(account.account_id, true)}
+                  >
+                    Not now
+                  </button>
+                </div>
               </div>
             );
           })}
+          {deferredPendingAccounts.length > 0 && (
+            <div
+              className="deferred-setup-list"
+              role="group"
+              aria-labelledby="deferred-setup-heading"
+            >
+              <div id="deferred-setup-heading" className="muted small deferred-setup-heading">
+                Saved for later
+              </div>
+              {deferredPendingAccounts.map((account) => {
+                const item = itemsById.get(account.item_id);
+                const institutionName = item?.institutionName || '';
+                const accountName = account.name || institutionName || 'Connected credit card';
+                return (
+                  <button
+                    ref={(node) => {
+                      const key = `deferred:${account.account_id}`;
+                      if (node) setupFocusTargets.current.set(key, node);
+                      else setupFocusTargets.current.delete(key);
+                    }}
+                    type="button"
+                    className="pending-account-collapsed"
+                    key={account.account_id}
+                    disabled={busy}
+                    onClick={() => setSetupDeferred(account.account_id, false)}
+                    aria-label={`Restore ${accountName} to card setup`}
+                  >
+                    <span className="deferred-setup-name">
+                      <strong>{accountName}</strong>
+                      {account.mask ? ` · ••${account.mask}` : ''}
+                    </span>
+                    <span className="badge provider-badge">{account.provider}</span>
+                    <span className="deferred-setup-action">Restore to setup</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </section>
       )}
 

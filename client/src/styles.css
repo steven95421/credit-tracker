@@ -155,11 +155,56 @@ select, .text-input {
 }
 .pending-account-details { min-width: 0; }
 .pending-product-select { width: 100%; }
+.pending-account-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.pending-setup-counts { justify-content: flex-end; }
+.pending-later-badge { background: var(--panel-2); }
+.deferred-setup-list {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.deferred-setup-heading { margin-bottom: 6px; }
+.pending-account-collapsed {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+}
+.pending-account-collapsed + .pending-account-collapsed { margin-top: 6px; }
+.pending-account-collapsed:hover { border-color: var(--accent); }
+.pending-account-collapsed:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pending-account-collapsed:disabled { cursor: wait; }
+.deferred-setup-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.deferred-setup-action { font-size: 12px; white-space: nowrap; }
 
 @media (max-width: 620px) {
   .sample-row { grid-template-columns: 76px minmax(0, 1fr) auto; gap: 6px; }
   .csv-grid > select, .csv-grid > .file-input { width: 100%; max-width: none; }
   .pending-account { grid-template-columns: 1fr; }
+  .pending-account-actions { justify-content: stretch; }
+  .pending-account-actions .btn { flex: 1; }
 }
 
 .login {

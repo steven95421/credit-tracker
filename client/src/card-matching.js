@@ -47,6 +47,23 @@ export function prunePendingSelections(selections, pendingAccounts) {
   return Object.keys(next).length === Object.keys(selections).length ? selections : next;
 }
 
+export function partitionPendingAccounts(pendingAccounts, deferredAccountIds) {
+  const active = [];
+  const deferred = [];
+  for (const account of pendingAccounts) {
+    (deferredAccountIds.has(account.account_id) ? deferred : active).push(account);
+  }
+  return { active, deferred };
+}
+
+export function pruneDeferredSetupIds(deferredAccountIds, pendingAccounts) {
+  const pendingAccountIds = new Set(pendingAccounts.map((account) => account.account_id));
+  const next = new Set(
+    [...deferredAccountIds].filter((accountId) => pendingAccountIds.has(accountId))
+  );
+  return next.size === deferredAccountIds.size ? deferredAccountIds : next;
+}
+
 export function defaultTrackedCardName(account, item) {
   return account.name || item?.institutionName || null;
 }

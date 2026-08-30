@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   defaultTrackedCardName,
+  partitionPendingAccounts,
   partitionProductsForInstitution,
+  pruneDeferredSetupIds,
   prunePendingSelections,
   unmappedConnectedAccounts,
 } from '../client/src/card-matching.js';
@@ -67,4 +69,21 @@ test('pending product selections retain only accounts that still need confirmati
     prunePendingSelections(selections, [{ account_id: 'stripe:2' }]),
     { 'stripe:2': 'hilton_aspire' }
   );
+});
+
+test('deferred card setup tasks stay ordered at the bottom and stale tasks are pruned', () => {
+  const accounts = [
+    { account_id: 'stripe:1' },
+    { account_id: 'stripe:2' },
+    { account_id: 'stripe:3' },
+  ];
+  const deferredIds = new Set(['stripe:2', 'stripe:old']);
+
+  const partitioned = partitionPendingAccounts(accounts, deferredIds);
+  assert.deepEqual(partitioned.active.map((account) => account.account_id), ['stripe:1', 'stripe:3']);
+  assert.deepEqual(partitioned.deferred.map((account) => account.account_id), ['stripe:2']);
+  assert.deepEqual([...pruneDeferredSetupIds(deferredIds, accounts)], ['stripe:2']);
+
+  const currentIds = new Set(['stripe:2']);
+  assert.equal(pruneDeferredSetupIds(currentIds, accounts), currentIds);
 });

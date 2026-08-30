@@ -92,8 +92,9 @@ export function buildCardProgressWindows(benefits) {
       benefitCount: 0,
     };
 
+    const effectiveRemaining = benefit.status === 'used' ? 0 : Number(benefit.remaining || 0);
     current.amount = roundMoney(current.amount + Number(benefit.amount || 0));
-    current.remaining = roundMoney(current.remaining + Number(benefit.remaining || 0));
+    current.remaining = roundMoney(current.remaining + effectiveRemaining);
     current.daysLeft = Math.min(current.daysLeft, finiteDays(benefit.daysLeft));
     current.benefitCount += 1;
     windows.set(key, current);

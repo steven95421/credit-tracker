@@ -64,6 +64,27 @@ test('card progress keeps monthly and annual limits in separate reset windows', 
   assert.equal(anchoredAnnual.status, 'used');
 });
 
+test('a manually claimed credit counts as fully used even without a used amount', () => {
+  const [window] = buildCardProgressWindows([
+    {
+      period: 'annual',
+      periodLabel: '2026',
+      windowStart: '2026-01-01',
+      windowEnd: '2026-12-31',
+      amount: 200,
+      used: 0,
+      remaining: 200,
+      daysLeft: 123,
+      status: 'used',
+    },
+  ]);
+
+  assert.equal(window.remaining, 0);
+  assert.equal(window.used, 200);
+  assert.equal(window.progress, 100);
+  assert.equal(window.status, 'used');
+});
+
 test('compact expiry labels make urgent deadlines scannable', () => {
   assert.equal(compactExpiryLabel(0), 'Today');
   assert.equal(compactExpiryLabel(1), '1 day');

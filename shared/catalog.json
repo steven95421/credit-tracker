@@ -11,7 +11,7 @@
           "name": "Uber Cash",
           "amount": 15,
           "period": "monthly",
-          "notes": "$15/mo Uber Cash (+$20 bonus in December = $35). Add the card to your Uber wallet; covers Uber rides & Uber Eats. Enrollment required.",
+          "notes": "$15/mo is issued directly to your Uber Cash balance in the Uber app—not as a card statement credit (+$20 bonus in December = $35). Add the card to your Uber wallet; covers Uber rides & Uber Eats. Enrollment required.",
           "match": { "merchants": ["uber"], "categories": [] }
         },
         {

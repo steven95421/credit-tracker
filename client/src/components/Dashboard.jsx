@@ -97,7 +97,11 @@ export default function Dashboard({ status, onChange }) {
         </section>
       )}
 
-      {cards.map((card) => (
+      {cards.map((card) => {
+        const progressWindows = buildCardProgressWindows(card.benefits);
+        const totalUsed = progressWindows.reduce((total, window) => total + window.used, 0);
+
+        return (
         <section className="card-section" key={card.cardId}>
           <div className="card-head">
             <div>
@@ -107,9 +111,19 @@ export default function Dashboard({ status, onChange }) {
                 {card.linked ? '' : ' · manual'}
               </div>
             </div>
-            <div className="right">
-              <strong>{money(card.totalRemaining)}</strong>
-              <div className="meta">unused</div>
+            <div
+              className="card-usage-totals"
+              role="group"
+              aria-label={`${money(card.totalRemaining)} unused, ${money(totalUsed)} used`}
+            >
+              <div className="card-usage-total">
+                <strong>{money(card.totalRemaining)}</strong>
+                <div className="meta">unused</div>
+              </div>
+              <div className="card-usage-total used">
+                <strong>{money(totalUsed)}</strong>
+                <div className="meta">used</div>
+              </div>
             </div>
           </div>
 
@@ -120,7 +134,7 @@ export default function Dashboard({ status, onChange }) {
                 <span>Grouped by reset window</span>
               </div>
               <div className="card-progress-windows">
-                {buildCardProgressWindows(card.benefits).map((window) => (
+                {progressWindows.map((window) => (
                   <div className={`card-progress-window ${window.status}`} key={window.key}>
                     <div className="card-progress-window-head">
                       <span>
@@ -159,12 +173,24 @@ export default function Dashboard({ status, onChange }) {
               <code>server/src/catalog.json</code> to add some.
             </div>
           ) : (
-            card.benefits.map((b) => (
-              <BenefitRow key={b.benefitId} cardId={card.cardId} b={b} onChange={onChange} />
-            ))
+            <details className="benefit-details">
+              <summary className="benefit-details-summary">
+                <span>Credit details</span>
+                <span>
+                  {card.benefits.length} credit{card.benefits.length === 1 ? '' : 's'}
+                  <span className="benefit-details-chevron" aria-hidden="true">›</span>
+                </span>
+              </summary>
+              <div className="benefit-details-list">
+                {card.benefits.map((b) => (
+                  <BenefitRow key={b.benefitId} cardId={card.cardId} b={b} onChange={onChange} />
+                ))}
+              </div>
+            </details>
           )}
         </section>
-      ))}
+        );
+      })}
     </>
   );
 }

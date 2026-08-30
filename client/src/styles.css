@@ -74,6 +74,22 @@ header.top h1 { font-size: 22px; margin: 0; letter-spacing: -0.02em; }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px; }
 .card-head .name { font-weight: 600; }
 .card-head .meta { color: var(--muted); font-size: 13px; }
+.card-usage-totals { display: flex; align-items: flex-end; gap: 18px; text-align: right; }
+.card-usage-total { display: flex; flex-direction: column; white-space: nowrap; }
+.card-usage-total.used strong { color: var(--green); }
+.benefit-details { margin-top: 12px; border-top: 1px solid var(--border); }
+.benefit-details-summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 0 6px; color: var(--muted); cursor: pointer; list-style: none;
+  font-size: 12.5px; font-weight: 650;
+}
+.benefit-details-summary::-webkit-details-marker { display: none; }
+.benefit-details-summary > span:last-child { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.benefit-details-summary:hover { color: var(--text); }
+.benefit-details-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.benefit-details-chevron { color: var(--accent); font-size: 20px; line-height: 1; transition: transform 140ms ease; }
+.benefit-details[open] .benefit-details-chevron { transform: rotate(90deg); }
+.benefit-details-list { padding-top: 4px; }
 
 .benefit {
   display: grid; grid-template-columns: 1fr auto; gap: 6px 14px;
@@ -371,6 +387,7 @@ select, .text-input {
   .expiry-credit-deadline { min-width: 54px; }
   .card-progress-windows { grid-template-columns: 1fr; }
   .card-progress-heading { align-items: center; }
+  .card-usage-totals { gap: 12px; }
   .sample-row { grid-template-columns: 76px minmax(0, 1fr) auto; gap: 6px; }
   .csv-grid > select, .csv-grid > .file-input { width: 100%; max-width: none; }
   .pending-account { grid-template-columns: 1fr; }

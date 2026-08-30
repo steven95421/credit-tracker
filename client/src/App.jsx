@@ -14,6 +14,7 @@ export default function App() {
   const [needLogin, setNeedLogin] = useState(false);
   const [error, setError] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [booting, setBooting] = useState(true);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -25,9 +26,11 @@ export default function App() {
   }, []);
 
   const boot = useCallback(async () => {
+    setBooting(true);
     try {
       const cfg = await api.get('/api/config');
       setConfig(cfg);
+      setError('');
       if (cfg.authRequired && !cfg.authed) {
         setNeedLogin(true);
         setStatus(null);
@@ -37,6 +40,10 @@ export default function App() {
       await loadStatus();
     } catch (e) {
       setError(e.message);
+      setConfig(null);
+      setNeedLogin(true);
+    } finally {
+      setBooting(false);
     }
   }, [loadStatus]);
 
@@ -57,8 +64,11 @@ export default function App() {
   const syncAll = async () => {
     setSyncing(true);
     try {
-      await api.post('/api/sync');
+      const result = await api.post('/api/sync');
       await loadStatus();
+      if (result.failed) {
+        setError(`${result.failed} linked provider failed to sync. Open Cards & Accounts for details.`);
+      }
     } catch (e) {
       if (e.status !== 401) setError(e.message);
     } finally {
@@ -66,20 +76,60 @@ export default function App() {
     }
   };
 
+  const stripeConfig = config?.providers?.find((provider) => provider.id === 'stripe');
+  const tellerConfig = config?.providers?.find((provider) => provider.id === 'teller');
+  const plaidConfig = config?.providers?.find((provider) => provider.id === 'plaid');
+  const remoteSyncConfigured = Boolean(
+    stripeConfig?.configured || tellerConfig?.configured || plaidConfig?.configured
+  );
+  const publicUrl = (page) => `${import.meta.env.BASE_URL}${page}`;
+
   return (
     <div className="app">
       <header className="top">
         <h1>💳 Credit Tracker</h1>
         {config && (
           <span className="env-pill">
-            Plaid: {config.plaidEnv}
-            {!config.plaidConfigured && ' · not configured'}
+            Stripe: {stripeConfig?.configured ? stripeConfig.environment : 'not configured'}
+            {' · '}Teller: {tellerConfig?.configured ? tellerConfig.environment : 'not configured'}
+            {' · '}Plaid: {plaidConfig?.configured ? plaidConfig.environment : 'not configured'}
           </span>
         )}
       </header>
 
-      {needLogin ? (
-        <Login clientId={config?.googleClientId} onSuccess={boot} />
+      {needLogin || !config ? (
+        <main className="public-shell">
+          <section className="public-hero" aria-labelledby="product-heading">
+            <div className="public-copy">
+              <span className="public-kicker">Private beta · Read-only financial data</span>
+              <h2 id="product-heading">See every recurring card credit before it expires.</h2>
+              <p className="public-lead">
+                Credit Tracker brings eligible credit-card transactions and recurring statement-credit
+                benefits into one dashboard, so you can see what has been used and what still needs attention.
+              </p>
+              <div className="public-features" aria-label="Product capabilities">
+                <article>
+                  <strong>Connect or import</strong>
+                  <span>Link an eligible credit card through Stripe Financial Connections, or use CSV and manual tracking.</span>
+                </article>
+                <article>
+                  <strong>Limited data access</strong>
+                  <span>The Stripe connection requests Transactions access—not balances, ownership, ACH details, payments, or transfers.</span>
+                </article>
+                <article>
+                  <strong>You stay in control</strong>
+                  <span>Unlink an account to disconnect it and delete its locally stored accounts and transactions.</span>
+                </article>
+              </div>
+            </div>
+            <Login
+              clientId={config?.googleClientId}
+              loading={booting}
+              apiUnavailable={!booting && !config}
+              onSuccess={boot}
+            />
+          </section>
+        </main>
       ) : (
         <>
           <div className="tabs">
@@ -90,7 +140,7 @@ export default function App() {
               Cards &amp; Accounts
             </button>
             <div className="spacer" />
-            <button className="" onClick={syncAll} disabled={syncing || !config?.plaidConfigured}>
+            <button className="" onClick={syncAll} disabled={syncing || !remoteSyncConfigured}>
               {syncing ? 'Syncing…' : '↻ Sync transactions'}
             </button>
             {config?.authRequired && (
@@ -102,10 +152,10 @@ export default function App() {
 
           {error && <div className="err">⚠ {error}</div>}
 
-          {config && !config.plaidConfigured && (
+          {config && !remoteSyncConfigured && (
             <div className="notice">
-              Plaid keys aren’t set{config.authRequired ? ' on the API worker' : ''}. You can still track
-              cards manually; set <code>PLAID_CLIENT_ID</code> / <code>PLAID_SECRET</code> to link real cards.
+              Stripe, Teller, and Plaid are not configured{config.authRequired ? ' on the API Worker' : ''}.
+              You can still import CSV statements or track cards manually.
             </div>
           )}
 
@@ -116,6 +166,16 @@ export default function App() {
           )}
         </>
       )}
+
+      <footer className="site-footer">
+        <span>Credit Tracker · Independent private beta</span>
+        <nav aria-label="Legal and support">
+          <a href={publicUrl('privacy.html')}>Privacy</a>
+          <a href={publicUrl('terms.html')}>Terms</a>
+          <a href={publicUrl('data-deletion.html')}>Data deletion</a>
+          <a href={publicUrl('support.html')}>Support</a>
+        </nav>
+      </footer>
     </div>
   );
 }

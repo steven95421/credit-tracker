@@ -1,75 +1,195 @@
-// D1 query helpers — mirrors the prepared statements in server/src/db.js.
+// D1 query helpers. Local primary keys are stable app ids; provider/external ids
+// preserve the upstream identity and prevent Plaid, Teller, and CSV collisions.
 const all = async (stmt) => (await stmt.all()).results;
+
+const chunks = (rows, size = 50) => {
+  const out = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
+};
 
 // items
 export const listItems = (DB) => all(DB.prepare('SELECT * FROM items ORDER BY created_at'));
+export const listItemsByProvider = (DB, provider) =>
+  all(DB.prepare('SELECT * FROM items WHERE provider = ? ORDER BY created_at').bind(provider));
 export const getItem = (DB, id) => DB.prepare('SELECT * FROM items WHERE item_id = ?').bind(id).first();
-export const insertItem = (DB, itemId, accessToken, institutionId, institutionName, createdAt) =>
+export const getItemByExternal = (DB, provider, externalId) =>
+  DB.prepare('SELECT * FROM items WHERE provider = ? AND external_item_id = ?')
+    .bind(provider, externalId).first();
+
+export const insertItem = (DB, item) =>
   DB.prepare(
-    `INSERT INTO items (item_id, access_token, institution_id, institution_name, cursor, created_at)
-     VALUES (?, ?, ?, ?, NULL, ?)
-     ON CONFLICT(item_id) DO UPDATE SET
+    `INSERT INTO items
+       (item_id, provider, external_item_id, access_token, institution_id,
+        institution_name, cursor, provider_data, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+     ON CONFLICT(provider, external_item_id) DO UPDATE SET
        access_token=excluded.access_token,
        institution_id=excluded.institution_id,
-       institution_name=excluded.institution_name`
-  ).bind(itemId, accessToken, institutionId, institutionName, createdAt).run();
+       institution_name=excluded.institution_name,
+       provider_data=COALESCE(excluded.provider_data, items.provider_data)`
+  ).bind(
+    item.itemId,
+    item.provider,
+    item.externalItemId,
+    item.accessToken,
+    item.institutionId ?? null,
+    item.institutionName ?? null,
+    item.providerData ? JSON.stringify(item.providerData) : null,
+    item.createdAt
+  ).run();
+
 export const deleteItem = (DB, id) => DB.prepare('DELETE FROM items WHERE item_id = ?').bind(id).run();
 export const setCursor = (DB, itemId, cursor, syncedAt) =>
-  DB.prepare('UPDATE items SET cursor = ?, last_synced_at = ? WHERE item_id = ?').bind(cursor, syncedAt, itemId).run();
+  DB.prepare('UPDATE items SET cursor = ?, last_synced_at = ? WHERE item_id = ?')
+    .bind(cursor ?? null, syncedAt, itemId).run();
+export const setItemProviderData = (DB, itemId, data) =>
+  DB.prepare('UPDATE items SET provider_data = ? WHERE item_id = ?')
+    .bind(JSON.stringify(data || {}), itemId).run();
+export const mergeItemProviderData = (DB, itemId, patch) =>
+  DB.prepare(
+    `UPDATE items
+     SET provider_data = json_patch(COALESCE(provider_data, '{}'), ?)
+     WHERE item_id = ?`
+  ).bind(JSON.stringify(patch || {}), itemId).run();
 
 // accounts
-export const upsertAccount = (DB, a, itemId) =>
+export const upsertAccount = (DB, account) =>
   DB.prepare(
-    `INSERT INTO accounts (account_id, item_id, name, official_name, mask, type, subtype)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(account_id) DO UPDATE SET
-       name=excluded.name, official_name=excluded.official_name, mask=excluded.mask,
-       type=excluded.type, subtype=excluded.subtype`
-  ).bind(a.account_id, itemId, a.name ?? null, a.official_name ?? null, a.mask ?? null, a.type ?? null, a.subtype ?? null).run();
+    `INSERT INTO accounts
+       (account_id, provider, external_account_id, item_id, name, official_name, mask, type, subtype)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(provider, external_account_id) DO UPDATE SET
+       item_id=excluded.item_id, name=excluded.name, official_name=excluded.official_name,
+       mask=excluded.mask, type=excluded.type, subtype=excluded.subtype`
+  ).bind(
+    account.accountId,
+    account.provider,
+    account.externalAccountId,
+    account.itemId,
+    account.name ?? null,
+    account.officialName ?? null,
+    account.mask ?? null,
+    account.type ?? null,
+    account.subtype ?? null
+  ).run();
+
 export const listAccounts = (DB) => all(DB.prepare('SELECT * FROM accounts ORDER BY name'));
 export const listAccountsByItem = (DB, itemId) =>
   all(DB.prepare('SELECT * FROM accounts WHERE item_id = ? ORDER BY name').bind(itemId));
 export const getAccount = (DB, id) => DB.prepare('SELECT * FROM accounts WHERE account_id = ?').bind(id).first();
+export const getAccountByExternal = (DB, provider, externalId) =>
+  DB.prepare('SELECT * FROM accounts WHERE provider = ? AND external_account_id = ?')
+    .bind(provider, externalId).first();
 export const deleteAccountsByItem = (DB, itemId) =>
   DB.prepare('DELETE FROM accounts WHERE item_id = ?').bind(itemId).run();
 
 // transactions
-export const upsertTxn = (DB, vals) =>
+const txnStatement = (DB, txn) =>
   DB.prepare(
-    `INSERT INTO transactions (transaction_id, account_id, item_id, date, name, merchant_name, amount, iso_currency, category, pending, raw)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(transaction_id) DO UPDATE SET
-       account_id=excluded.account_id, date=excluded.date, name=excluded.name,
-       merchant_name=excluded.merchant_name, amount=excluded.amount, iso_currency=excluded.iso_currency,
-       category=excluded.category, pending=excluded.pending, raw=excluded.raw`
-  ).bind(...vals).run();
-export const deleteTxn = (DB, id) => DB.prepare('DELETE FROM transactions WHERE transaction_id = ?').bind(id).run();
+    `INSERT INTO transactions
+       (transaction_id, provider, external_transaction_id, account_id, item_id, date,
+        name, merchant_name, amount, iso_currency, category, pending, raw)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(provider, external_transaction_id) DO UPDATE SET
+       account_id=excluded.account_id, item_id=excluded.item_id, date=excluded.date,
+       name=excluded.name, merchant_name=excluded.merchant_name, amount=excluded.amount,
+       iso_currency=excluded.iso_currency, category=excluded.category,
+       pending=excluded.pending, raw=excluded.raw`
+  ).bind(
+    txn.transactionId,
+    txn.provider,
+    txn.externalTransactionId,
+    txn.accountId,
+    txn.itemId,
+    txn.date,
+    txn.name ?? null,
+    txn.merchantName ?? null,
+    txn.amount,
+    txn.isoCurrency ?? null,
+    txn.category ?? null,
+    txn.pending ? 1 : 0,
+    txn.raw ?? null
+  );
+
+export const upsertTxn = (DB, txn) => txnStatement(DB, txn).run();
+export const upsertTxns = async (DB, txns) => {
+  for (const group of chunks(txns)) await DB.batch(group.map((txn) => txnStatement(DB, txn)));
+};
+export const deleteTxn = (DB, id) =>
+  DB.prepare('DELETE FROM transactions WHERE transaction_id = ?').bind(id).run();
+export const deleteTxnByExternal = (DB, provider, externalId) =>
+  DB.prepare('DELETE FROM transactions WHERE provider = ? AND external_transaction_id = ?')
+    .bind(provider, externalId).run();
 export const deleteTxnsByItem = (DB, itemId) =>
   DB.prepare('DELETE FROM transactions WHERE item_id = ?').bind(itemId).run();
+export const deletePendingTxnsInWindow = (DB, accountId, start, end) =>
+  DB.prepare(
+    'DELETE FROM transactions WHERE account_id = ? AND pending = 1 AND date >= ? AND date <= ?'
+  ).bind(accountId, start, end).run();
 export const txnsForAccountBetween = (DB, accountId, start, end) =>
-  all(DB.prepare('SELECT * FROM transactions WHERE account_id = ? AND date >= ? AND date <= ? ORDER BY date DESC').bind(accountId, start, end));
+  all(DB.prepare(
+    'SELECT * FROM transactions WHERE account_id = ? AND date >= ? AND date <= ? ORDER BY date DESC'
+  ).bind(accountId, start, end));
 export const txnsForAccount = (DB, accountId, limit) =>
-  all(DB.prepare('SELECT * FROM transactions WHERE account_id = ? ORDER BY date DESC LIMIT ?').bind(accountId, limit));
+  all(DB.prepare('SELECT * FROM transactions WHERE account_id = ? ORDER BY date DESC LIMIT ?')
+    .bind(accountId, limit));
 
 // cards
 export const insertCard = async (DB, accountId, productKey, displayName, createdAt) => {
-  const r = await DB.prepare('INSERT INTO cards (account_id, product_key, display_name, created_at) VALUES (?, ?, ?, ?)')
-    .bind(accountId, productKey, displayName, createdAt).run();
+  const r = await DB.prepare(
+    'INSERT INTO cards (account_id, product_key, display_name, created_at) VALUES (?, ?, ?, ?)'
+  ).bind(accountId, productKey, displayName, createdAt).run();
   return r.meta.last_row_id;
 };
 export const listCards = (DB) => all(DB.prepare('SELECT * FROM cards ORDER BY created_at'));
 export const getCard = (DB, id) => DB.prepare('SELECT * FROM cards WHERE id = ?').bind(id).first();
+export const getCardByAccount = (DB, accountId) =>
+  DB.prepare('SELECT * FROM cards WHERE account_id = ?').bind(accountId).first();
+export const updateCardAccount = (DB, id, accountId) =>
+  DB.prepare('UPDATE cards SET account_id = ? WHERE id = ?').bind(accountId, id).run();
 export const deleteCard = (DB, id) => DB.prepare('DELETE FROM cards WHERE id = ?').bind(id).run();
 export const unlinkCardsOfAccounts = (DB, itemId) =>
-  DB.prepare('UPDATE cards SET account_id = NULL WHERE account_id IN (SELECT account_id FROM accounts WHERE item_id = ?)').bind(itemId).run();
+  DB.prepare(
+    'UPDATE cards SET account_id = NULL WHERE account_id IN (SELECT account_id FROM accounts WHERE item_id = ?)'
+  ).bind(itemId).run();
 
-// overrides
+// Teller Connect nonces
+export const putLinkNonce = async (DB, nonceHash, sessionHash, provider, expiresAt, createdAt) => {
+  await DB.prepare('DELETE FROM link_nonces WHERE expires_at < ?').bind(Date.now()).run();
+  return DB.prepare(
+    'INSERT INTO link_nonces (nonce_hash, session_hash, provider, expires_at, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).bind(nonceHash, sessionHash, provider, expiresAt, createdAt).run();
+};
+export const consumeLinkNonce = async (DB, nonceHash, sessionHash, provider) => {
+  const result = await DB.prepare(
+    `DELETE FROM link_nonces
+     WHERE nonce_hash = ? AND session_hash = ? AND provider = ? AND expires_at >= ?`
+  ).bind(nonceHash, sessionHash, provider, Date.now()).run();
+  return Number(result.meta?.changes || 0) === 1;
+};
+
+// durable provider identity
+export const getProviderProfile = (DB, provider) =>
+  DB.prepare('SELECT * FROM provider_profiles WHERE provider = ?').bind(provider).first();
+export const putProviderProfileIfAbsent = async (DB, provider, externalId, timestamp) => {
+  await DB.prepare(
+    `INSERT OR IGNORE INTO provider_profiles (provider, external_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?)`
+  ).bind(provider, externalId, timestamp, timestamp).run();
+  return getProviderProfile(DB, provider);
+};
+
+// benefit overrides
 export const getOverride = (DB, cardId, benefitId, periodKey) =>
-  DB.prepare('SELECT * FROM benefit_overrides WHERE card_id = ? AND benefit_id = ? AND period_key = ?').bind(cardId, benefitId, periodKey).first();
+  DB.prepare(
+    'SELECT * FROM benefit_overrides WHERE card_id = ? AND benefit_id = ? AND period_key = ?'
+  ).bind(cardId, benefitId, periodKey).first();
 export const upsertOverride = (DB, cardId, benefitId, periodKey, usedAmount, claimed, note, updatedAt) =>
   DB.prepare(
     `INSERT INTO benefit_overrides (card_id, benefit_id, period_key, used_amount, claimed, note, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(card_id, benefit_id, period_key) DO UPDATE SET
-       used_amount=excluded.used_amount, claimed=excluded.claimed, note=excluded.note, updated_at=excluded.updated_at`
+       used_amount=excluded.used_amount, claimed=excluded.claimed,
+       note=excluded.note, updated_at=excluded.updated_at`
   ).bind(cardId, benefitId, periodKey, usedAmount, claimed, note, updatedAt).run();

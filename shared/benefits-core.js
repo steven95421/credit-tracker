@@ -3,11 +3,22 @@
 //   worker/  (Cloudflare Worker + D1, cloud deployment)
 // Callers supply the catalog products array and async-capable data deps.
 
-// ---------- date helpers (UTC, YYYY-MM-DD) ----------
+// ---------- calendar helpers (YYYY-MM-DD) ----------
 const DAY = 86400000;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-export function todayYMD(now = new Date()) {
+export function todayYMD(now = new Date(), timeZone = null) {
+  if (timeZone) {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).formatToParts(now).map((part) => [part.type, part.value])
+    );
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  }
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 function parseYMD(s) {
@@ -85,7 +96,8 @@ export function daysUntil(endYMD, today = todayYMD()) {
 
 /** True if a transaction counts toward a benefit's spend. */
 export function matchesBenefit(txn, benefit) {
-  if (txn.amount <= 0) return false; // only purchases (Plaid: positive = charge, negative = payment/refund)
+  // Every provider adapter must emit the canonical sign: positive = purchase/charge.
+  if (!Number.isFinite(Number(txn.amount)) || Number(txn.amount) <= 0) return false;
   const rules = benefit.match || {};
   const merchants = (rules.merchants || []).map((s) => s.toLowerCase());
   const categories = (rules.categories || []).map((s) => s.toUpperCase());
@@ -95,7 +107,7 @@ export function matchesBenefit(txn, benefit) {
   if (merchants.some((msub) => hay.includes(msub))) return true;
 
   const cat = (txn.category || '').toUpperCase();
-  if (cat && categories.some((c) => cat.includes(c) || c.includes(cat))) return true;
+  if (cat && categories.includes(cat)) return true;
 
   return false;
 }

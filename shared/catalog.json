@@ -59,8 +59,8 @@
           "name": "Airline Fee Credit",
           "amount": 200,
           "period": "annual",
-          "notes": "Up to $200/yr in incidental fees (bags, seats) with ONE selected airline. Calendar year. Enrollment required.",
-          "match": { "merchants": [], "categories": ["TRAVEL"] }
+          "notes": "Up to $200/yr in incidental fees (bags, seats) with ONE selected airline. Calendar year. Enrollment required. Airfare, hotels, and rideshare share broad travel categories, so verify this credit manually.",
+          "match": { "merchants": [], "categories": [] }
         },
         {
           "id": "amex_plat_uber_one",

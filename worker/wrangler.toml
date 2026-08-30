@@ -4,7 +4,10 @@ name = "credit-tracker-api"
 main = "src/index.js"
 compatibility_date = "2026-07-01"
 
-# Daily auto-sync of Plaid transactions, 13:00 UTC ≈ 6am PT.
+[observability]
+enabled = true
+
+# Daily reconciliation of Stripe, Teller, and Plaid transactions, 13:00 UTC ≈ 6am PT.
 [triggers]
 crons = ["0 13 * * *"]
 
@@ -14,7 +17,21 @@ database_name = "credit-tracker"
 database_id = "6e28f89a-1246-4f4f-9cff-4933b96506cd"
 
 [vars]
-# sandbox | production
+# Stripe Financial Connections. The publishable key is safe to expose to the
+# browser, but is installation-specific; add it here or in worker/.dev.vars:
+# STRIPE_PUBLISHABLE_KEY = "pk_test_..."
+STRIPE_API_VERSION = "2026-08-26.dahlia"
+STRIPE_COUNTRY_CODES = "US"
+APP_TIME_ZONE = "America/Los_Angeles"
+
+# Teller: sandbox | development | production. Development/production require
+# the TELLER_MTLS binding shown below.
+TELLER_ENV = "sandbox"
+TELLER_INITIAL_DAYS = "400"
+# TELLER_APPLICATION_ID is public but installation-specific; add it after
+# creating the Teller application, e.g. TELLER_APPLICATION_ID = "app_..."
+
+# Plaid: sandbox | production
 PLAID_ENV = "sandbox"
 PLAID_COUNTRY_CODES = "US"
 PLAID_PRODUCTS = "transactions"
@@ -31,7 +48,17 @@ SESSION_TTL_DAYS = "30"
 # Uncomment once registered in the Plaid dashboard (needed for OAuth banks like Amex/Citi/Chase):
 # PLAID_REDIRECT_URI = "https://REPLACE_GITHUB_USERNAME.github.io/credit-tracker/"
 
+# Teller development/production outbound mTLS binding. Upload the Teller-issued
+# cert/key with Wrangler, then uncomment and paste the returned certificate id:
+# [[mtls_certificates]]
+# binding = "TELLER_MTLS"
+# certificate_id = "REPLACE_WITH_CLOUDFLARE_CERTIFICATE_ID"
+
 # Secrets — set these with `npx wrangler secret put <NAME>`, never in this file:
+#   STRIPE_SECRET_KEY       (sk_test_... while testing; use sk_live_... only after registration)
+#   STRIPE_WEBHOOK_SECRET   (whsec_... for POST /api/webhooks/stripe)
+#   TELLER_TOKEN_SIGNING_KEY  (public Token Signing Key from Teller dashboard)
+#   TOKEN_ENCRYPTION_KEY      (long random secret used to encrypt access tokens in D1)
 #   PLAID_CLIENT_ID   (from dashboard.plaid.com/developers/keys)
 #   PLAID_SECRET      (same page; use the secret matching PLAID_ENV)
 #   SESSION_SECRET    (any long random string, e.g. `openssl rand -hex 32`)

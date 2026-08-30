@@ -1,4 +1,4 @@
-// API base: '' for local dev (Vite proxies /api → :8080 Express, no auth).
+// API base: '' for local dev (Vite proxies /api → :8787 provider-aware Worker, DEV_MODE auth bypass).
 // For the GitHub Pages build, set VITE_API_BASE to the Cloudflare worker URL
 // (e.g. https://credit-tracker-api.<account>.workers.dev) — cross-origin, bearer-token auth.
 const API_BASE = import.meta.env.VITE_API_BASE || '';
@@ -35,6 +35,8 @@ async function req(method, path, body) {
     if (res.status === 401 && onUnauthorized) onUnauthorized();
     const err = new Error(data.error || `${method} ${path} failed (${res.status})`);
     err.status = res.status;
+    err.code = data.code;
+    err.detail = data.detail;
     throw err;
   }
   return data;

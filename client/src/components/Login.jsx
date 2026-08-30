@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { api, session } from '../api.js';
 
 /** Google Sign-In gate — renders the GIS button, trades the ID token for an API session. */
-export default function Login({ clientId, onSuccess }) {
+export default function Login({ clientId, loading = false, apiUnavailable = false, onSuccess }) {
   const btnRef = useRef(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -55,10 +55,17 @@ export default function Login({ clientId, onSuccess }) {
   return (
     <div className="login">
       <div className="login-emoji">🔒</div>
-      <h2>Locked</h2>
-      <p className="muted">Sign in with your Google account to open the dashboard.</p>
-      {clientId ? (
+      <h2>Approved-user sign in</h2>
+      <p className="muted">This private beta is limited to accounts approved by the operator.</p>
+      {loading ? (
+        <div className="muted">Loading secure sign-in…</div>
+      ) : clientId ? (
         <div className="login-google" ref={btnRef} />
+      ) : apiUnavailable ? (
+        <>
+          <div className="err">⚠ Dashboard sign-in is temporarily unavailable.</div>
+          <button className="btn" type="button" onClick={onSuccess}>Retry</button>
+        </>
       ) : (
         <div className="err">⚠ GOOGLE_CLIENT_ID is not configured on the API worker yet.</div>
       )}

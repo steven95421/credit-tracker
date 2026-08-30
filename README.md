@@ -1,111 +1,138 @@
 # Credit Tracker
 
-Self-hosted, personal-use web app that tracks **unused credit-card statement credits** so you don't
-leave money on the table. It pulls your own credit-card transactions via [Plaid](https://plaid.com)
-(Transactions product), matches them against a catalog of recurring card benefits
-(monthly / quarterly / semi-annual / annual), and surfaces the credits that are about to expire.
+Personal web app for tracking unused credit-card statement credits. It normalizes transactions from
+**Stripe Financial Connections**, **Plaid**, **Teller**, or **CSV statements**, matches them against
+recurring card benefits, and keeps manual overrides for credits that cannot be identified reliably.
 
-Examples it's built for: Amex Platinum monthly Uber Cash, Hilton Aspire semi-annual resort credit,
-Chase Sapphire Reserve annual travel credit, Citi Strata monthly entertainment credit.
+Stripe Financial Connections is the primary live-data path. Plaid and existing Teller installations
+remain available, and every card can still be tracked manually. The production API is the Cloudflare
+Worker in `worker/`; the older Express server is kept only as a Plaid-only legacy development path.
 
-> Personal use only, runs against your own cards. This is a rebuild from spec — verify the benefit
-> amounts in `server/src/catalog.json` against your card's current terms.
+## Provider behavior
 
-## Stack
+- **Stripe Financial Connections** — A server-created Session requests only `transactions`, prefetches
+  the initial history, and restricts selection to `credit_card`. Stripe refreshes asynchronously, so
+  the Worker verifies the raw webhook signature before importing completed refreshes. It never stores
+  a Stripe secret or Session client secret in D1. Financial Connections transaction records expose a
+  bank description but no structured merchant name, category, or MCC, so Stripe benefit matching uses
+  description text and may require manual confirmation. The Worker reuses one durable Stripe Customer;
+  one-shot Session ids are never used as the permanent local item identity. Each collected Financial
+  Connections Account is stored as its own item, so sign confirmation, status, sync, and unlink remain
+  specific to one card.
+- **Teller (legacy)** — Connect runs with a server-generated one-time nonce. The Worker verifies Teller's
+  Ed25519 enrollment signature, encrypts the access token in D1, checks that the selected credit-card
+  account advertises a transactions link, and syncs with a 10-day overlap.
+- **Plaid** — Existing Link and `transactions/sync` behavior is preserved behind the same provider
+  abstraction.
+- **CSV** — Import common statement formats with `Amount`, or separate `Debit` / `Credit` columns.
+  Choose the sign used by purchases before import. A malformed file is fully validated before earlier
+  imported rows are replaced.
+- **Manual** — Add card profiles without an account and mark benefits used by hand.
 
-- **Client** — React + Vite + `react-plaid-link`. Deployable to **GitHub Pages** (see `DEPLOY.md`).
-- **Local server** — Node + Express + Plaid Node SDK, SQLite via the built-in `node:sqlite` (no native deps).
-- **Cloud API** — Cloudflare **Worker + D1** (`worker/`), same routes as the Express server,
-  plus Google Sign-In auth (email allowlist, no passwords) and a daily transaction-sync cron. Free tier.
-- **Shared engine** — `shared/benefits-core.js` + `shared/catalog.json`, used by both backends.
+Every provider emits one canonical transaction contract: finite numeric amount, positive for a
+purchase/charge, negative for a payment/refund, validated `YYYY-MM-DD` date, and a normalized category
+when the provider supplies one.
 
-## Setup
+## Local setup
 
 ```bash
 cd ~/Desktop/credit-tracker
-npm run setup            # installs server + client deps
-cp .env.example .env     # then fill PLAID_CLIENT_ID / PLAID_SECRET
+npm run setup
+npm --prefix worker run db:migrate:local
+npm run dev
 ```
 
-Get sandbox keys at <https://dashboard.plaid.com/developers/keys>. Start on `PLAID_ENV=sandbox`;
-switch to `production` once Plaid Full Production access is granted.
+The tracked migrations work for both a fresh local D1 and an older Plaid-only local D1, and are safe
+to run again after pulling a new migration.
 
-## Run
+This starts the provider-aware Worker on `http://localhost:8787` and Vite on
+`http://localhost:5173`. Local Worker auth is bypassed by `DEV_MODE=1`.
+
+For Stripe sandbox testing, add installation-specific values to `worker/.dev.vars`:
+
+```dotenv
+STRIPE_PUBLISHABLE_KEY=pk_test_...
+STRIPE_SECRET_KEY=sk_test_...
+# Optional locally; get this from `stripe listen` to test automatic imports:
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
+`APP_TIME_ZONE` defaults from `worker/wrangler.toml`; change it to the cardholder's IANA time zone if
+needed so transactions near midnight land in the intended benefit period.
+
+Stripe sandbox Sessions show test institutions and return test transactions. To exercise the webhook
+locally, run `stripe listen --forward-to localhost:8787/api/webhooks/stripe`. Without a webhook secret,
+linking still works and **Sync** imports a completed refresh manually. `worker/.dev.vars*` is ignored by
+Git. See [DEPLOY.md](DEPLOY.md) for live registration and webhook setup.
+
+The legacy Express/Plaid path is still available only through explicit `:legacy` scripts, but new
+provider work is not duplicated there. `npm start` now starts the local Worker, not the unauthenticated
+legacy Express server.
+
+## Use
+
+1. Open **Cards & Accounts** and connect a credit card with Stripe, use a configured fallback, or add
+   a manual card. Stripe initially exposes only test institutions while using test API keys.
+2. Stripe prepares transaction history asynchronously. Wait for the signed webhook, or press
+   **Check refresh** / **Sync**. Then inspect real sample rows and confirm whether purchases use a
+   positive or negative amount; no Stripe transaction is stored before this confirmation.
+3. For a legacy Teller enrollment, load sample transactions and explicitly confirm whether a real
+   purchase is positive or negative. No Teller transactions sync before this confirmation. If the
+   initial sync window is empty, the UI requires an explicit acknowledgement that you checked a
+   statement separately.
+4. Map the linked account to a card product. For CSV, first create a manual card, then import its
+   statement from the CSV fallback section.
+5. Open **Dashboard** to review matched spend, remaining credits, reset dates, and expiring benefits.
+6. Use **Mark used** or the **$ used** field when statement-credit matching is ambiguous.
+
+Teller Development uses real bank data and has a lifetime total of 100 enrollments. Repair an existing
+enrollment from its item row instead of connecting it again; deleting it does not restore the count.
+
+## Verify changes
 
 ```bash
-npm run dev              # server on :8080, client on :5173 (Vite proxies /api → :8080)
+npm test
+npm run build
+cd worker && npx wrangler deploy --dry-run
 ```
 
-Open <http://localhost:5173>.
+Tests cover Stripe Session scope, credit-card amount normalization, webhook HMAC/timestamp checks,
+strict date/category handling, benefit matching, Teller signature verification, encrypted token
+storage, and common CSV statement layouts.
 
-**Sandbox login:** in the Plaid Link dialog use username `user_good`, password `pass_good`
-(any OTP). This links a fake institution with sample transactions.
+The signature unit test uses Teller's documented literal field order. Before enabling Development or
+Production, complete one real Teller Sandbox enrollment end to end; a locally generated signature
+cannot substitute for validating the dashboard key encoding and actual Connect payload.
 
-### Production-style single process
+## Benefit catalog
 
-```bash
-npm run build            # builds client into client/dist
-npm start                # Express serves the API + the built client on :8080
-```
-
-## How to use
-
-1. **Cards & Accounts** tab → *Link a card with Plaid* (or add a manual card without linking).
-2. Map the linked account to a card product, then *Sync transactions*.
-3. **Dashboard** tab → see each card's benefits, how much of each credit is used vs remaining,
-   days until the period resets, and what's expiring soon.
-4. Auto-matching is best-effort (statement credits don't always post cleanly). Use **Mark used** or
-   the **$ used** field to override any benefit manually.
-
-## Deploying to the cloud ($0)
-
-GitHub Pages (UI) + Cloudflare Worker/D1 (API + data) + Google Sign-In (no passwords).
-Full walkthrough: **[DEPLOY.md](DEPLOY.md)**.
-
-## Editing the benefit catalog
-
-`shared/catalog.json` is read live by the local server (no restart needed; the cloud worker
-bundles it — redeploy after edits). Each benefit:
-
-```jsonc
-{
-  "id": "amex_plat_uber",
-  "name": "Uber Cash",
-  "amount": 15,
-  "period": "monthly",          // monthly | quarterly | semiannual | annual
-  "notes": "...",
-  "match": {                      // omit/empty => manual-only benefit
-    "merchants": ["uber"],        // case-insensitive substrings of merchant_name/name
-    "categories": ["TRANSPORTATION"]  // Plaid personal_finance_category.primary
-  },
-  "anchor": { "month": 7, "day": 1 } // optional: cardmember-year start for `annual`
-}
-```
+`shared/catalog.json` is the single source of truth. Merchant matches are case-insensitive substrings;
+category matches use the canonical categories produced by `shared/transactions.js`. Empty match rules
+remain manual-only. Benefit terms change, so verify amounts and enrollment requirements against the
+issuer before relying on them.
 
 ## Layout
 
-```
+```text
 shared/
-  benefits-core.js   period-window math + credit-status engine (pure, shared)
-  catalog.json       editable benefit catalog (single source of truth)
-server/src/
-  index.js           Express app + routes (local use)
-  db.js              node:sqlite schema + prepared statements
-  plaid.js           Plaid Node SDK: link/exchange, transactions/sync
-  benefits.js        thin fs wrapper around the shared engine
+  transactions.js       provider-neutral transaction validation and normalization
+  benefits-core.js      period math and benefit matching
+  catalog.json          card/benefit catalog
 worker/
-  wrangler.toml      Cloudflare config (D1 binding, vars, cron)
-  schema.sql/seed.sql
-  src/index.js       Worker router (same API surface as Express)
-  src/auth.js        Google Sign-In verify + bearer sessions
-  src/plaid.js       Plaid via plain fetch
-  src/db.js          D1 query helpers
+  migrations/           tracked fresh install and Plaid-only D1 upgrade path
+  schema.sql             consolidated provider-aware D1 schema reference
+  src/providers.js       provider dispatch and token encryption boundary
+  src/stripe.js          Financial Connections Sessions, refreshes, webhook verification, unlink
+  src/teller.js          Teller account capability, samples, overlap sync, unlink
+  src/plaid.js           Plaid REST client and cursor sync
+  src/index.js           authenticated Worker routes and cron
 client/src/
-  App.jsx, api.js, components/  Dashboard, Cards & Accounts, BenefitRow, Login
-.github/workflows/deploy-pages.yml   builds client → GitHub Pages
+  components/            Stripe/Teller/Plaid/manual/CSV UI and dashboard
+  csv.js                 browser-side CSV header mapping
+server/                  legacy local Plaid-only backend
+test/                    Node tests
 ```
 
-## Plaid access
-
-Runs on **sandbox** keys (or fully manual without keys) until Plaid Full Production
-access is granted for your account; then switch `PLAID_ENV=production` (see `DEPLOY.md` §4).
+Cloud deployment uses GitHub Pages for the UI and Cloudflare Worker + D1 for the API and data. Follow
+[DEPLOY.md](DEPLOY.md); do not deploy the new Worker before applying the D1 migration and configuring
+the required secrets.

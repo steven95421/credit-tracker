@@ -1,6 +1,7 @@
 // Plaid REST client for Workers — plain fetch, no SDK (the Node SDK drags in axios).
 // Mirrors server/src/plaid.js behavior exactly.
 import * as db from './db.js';
+import { canonicalTransaction, localId, PROVIDERS } from '../../shared/transactions.js';
 
 const HOSTS = {
   sandbox: 'https://sandbox.plaid.com',
@@ -75,6 +76,20 @@ export async function fetchAccounts(env, accessToken) {
   return (await plaid(env, '/accounts/get', { access_token: accessToken })).accounts;
 }
 
+export function accountRecord(account, itemId, existing = null) {
+  return {
+    accountId: existing?.account_id || localId(PROVIDERS.PLAID, account.account_id),
+    provider: PROVIDERS.PLAID,
+    externalAccountId: account.account_id,
+    itemId,
+    name: account.name,
+    officialName: account.official_name,
+    mask: account.mask,
+    type: account.type,
+    subtype: account.subtype,
+  };
+}
+
 function categoryOf(txn) {
   if (txn.personal_finance_category?.primary) return txn.personal_finance_category.primary;
   if (Array.isArray(txn.category) && txn.category.length) return txn.category[0];
@@ -88,6 +103,10 @@ export async function syncItem(env, item) {
   let modified = 0;
   let removed = 0;
   let hasMore = true;
+  const accountMap = new Map(
+    (await db.listAccountsByItem(env.DB, item.item_id))
+      .map((account) => [account.external_account_id || account.account_id, account.account_id])
+  );
 
   while (hasMore) {
     const data = await plaid(env, '/transactions/sync', {
@@ -97,16 +116,28 @@ export async function syncItem(env, item) {
     });
 
     for (const t of [...data.added, ...data.modified]) {
-      await db.upsertTxn(env.DB, [
-        t.transaction_id, t.account_id, item.item_id, t.date, t.name,
-        t.merchant_name ?? null, t.amount, t.iso_currency_code ?? null,
-        categoryOf(t), t.pending ? 1 : 0, JSON.stringify(t),
-      ]);
+      const accountId = accountMap.get(t.account_id);
+      if (!accountId) throw new Error(`Plaid transaction references unknown account ${t.account_id}`);
+      await db.upsertTxn(env.DB, canonicalTransaction({
+        provider: PROVIDERS.PLAID,
+        externalTransactionId: t.transaction_id,
+        transactionId: localId(PROVIDERS.PLAID, t.transaction_id),
+        accountId,
+        itemId: item.item_id,
+        date: t.date,
+        name: t.name,
+        merchantName: t.merchant_name,
+        amount: t.amount,
+        isoCurrency: t.iso_currency_code,
+        category: categoryOf(t),
+        pending: t.pending,
+        raw: t,
+      }));
     }
     added += data.added.length;
     modified += data.modified.length;
     for (const r of data.removed) {
-      await db.deleteTxn(env.DB, r.transaction_id);
+      await db.deleteTxnByExternal(env.DB, PROVIDERS.PLAID, r.transaction_id);
       removed++;
     }
 

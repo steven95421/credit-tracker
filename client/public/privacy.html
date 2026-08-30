@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Credit Tracker privacy policy" />
+    <link rel="stylesheet" href="legal.css" />
+    <title>Privacy Policy · Credit Tracker</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <a class="brand" href="./">💳 Credit Tracker</a>
+        <h1>Privacy Policy</h1>
+        <p class="updated">Effective August 29, 2026</p>
+      </header>
+
+      <p>
+        Credit Tracker is an independent, private-beta tool for monitoring recurring credit-card
+        statement credits. This policy explains the data the service processes, why it is used, and
+        how an approved user can delete it.
+      </p>
+
+      <h2>Data we process</h2>
+      <ul>
+        <li><strong>Authentication:</strong> the Google email address and identity token used to verify that an account is approved. We do not receive or store a Google password.</li>
+        <li><strong>Connected-account metadata:</strong> provider and institution identifiers, account name, type, and masked account digits.</li>
+        <li><strong>Transaction data:</strong> transaction date, description, amount, currency, pending status, provider identifiers, and the provider's original transaction record made available through a connected account.</li>
+        <li><strong>Data you add:</strong> CSV transaction rows, card-product mappings, display names, and manual benefit-use adjustments.</li>
+        <li><strong>Technical data:</strong> limited request and error information processed by the hosting providers to operate and secure the service.</li>
+      </ul>
+
+      <div class="callout">
+        <strong>Financial Connections scope.</strong> The Stripe connection requests Transactions
+        permission and limits selection to credit-card accounts. Credit Tracker does not request
+        balances, ownership data, ACH account and routing numbers, payment-method access, payments, or transfers.
+        Bank login credentials are handled by Stripe and the financial institution, not by Credit Tracker.
+      </div>
+
+      <h2>How we use data</h2>
+      <p>
+        Data is used only to authenticate approved users; link, refresh, and display eligible accounts;
+        match transaction descriptions to configured statement-credit benefits; show remaining or expiring
+        benefits; process unlink requests; and protect and troubleshoot the service. Credit Tracker does not
+        sell personal or financial data and does not use it for advertising or credit decisions.
+      </p>
+
+      <h2>Service providers</h2>
+      <p>
+        Stripe processes Financial Connections sessions and connected-account data; Google provides sign-in;
+        Cloudflare hosts the API and database; and GitHub Pages serves the public web application. Each provider
+        processes information under its own terms and privacy policy. A legacy Plaid or Teller connection is
+        processed by that provider only when the operator has explicitly enabled it and the user chooses it.
+      </p>
+
+      <h2>Storage and retention</h2>
+      <p>
+        Connected-account metadata and imported transactions are stored in the operator's Cloudflare D1 database
+        for as long as the account remains linked or the data is needed for the dashboard. Unlinking removes the
+        corresponding local accounts and transactions and asks the provider to disconnect the account. Manual cards,
+        CSV rows, and benefit adjustments remain until they are removed or a complete deletion is requested.
+        Security and operational records may remain for the limited periods used by the hosting providers.
+      </p>
+
+      <h2>Security and access</h2>
+      <p>
+        The dashboard is restricted to approved Google accounts. Provider secret keys and webhook signing secrets
+        are kept in server-side secret storage and are not placed in the browser or database. No internet service can
+        guarantee absolute security, so users should report suspected issues promptly and avoid sending sensitive
+        financial details through public support channels.
+      </p>
+
+      <h2>Your choices</h2>
+      <p>
+        An approved user can unlink a connected institution and remove manual cards from the dashboard. See the
+        <a href="data-deletion.html">Data Deletion Instructions</a> to request deletion of all associated data.
+        Access can be withdrawn by the operator at any time.
+      </p>
+
+      <h2>Changes and contact</h2>
+      <p>
+        Material changes will be posted here with a revised effective date. For privacy questions, use the
+        <a href="support.html">support page</a>; do not include account numbers, transactions, credentials, or other
+        sensitive data in a public message.
+      </p>
+
+      <footer><a href="./">Back to Credit Tracker</a> · <a href="terms.html">Terms</a> · <a href="support.html">Support</a></footer>
+    </main>
+  </body>
+</html>

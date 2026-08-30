@@ -535,8 +535,10 @@ export default function CardsAccounts({ config, onChange }) {
   );
   const csvCards = cards.filter((card) => !card.account || card.account.provider === 'csv');
 
-  const setSetupDeferred = (accountId, deferred) => {
-    setupFocusRequest.current = `${deferred ? 'deferred' : 'active'}:${accountId}`;
+  const setSetupDeferred = (accountId, deferred, keyboardTriggered = false) => {
+    setupFocusRequest.current = deferred
+      ? (keyboardTriggered ? 'pending-section-heading' : null)
+      : `active:${accountId}`;
     setDeferredSetupIds((current) => {
       const next = new Set(current);
       if (deferred) next.add(accountId);
@@ -587,9 +589,6 @@ export default function CardsAccounts({ config, onChange }) {
             remain available, but a completed refresh will not import immediately.
           </div>
         )}
-        {!tellerConfig?.configured && (
-          <div className="muted small">Teller is not configured. Stripe, Plaid, CSV, and manual tracking remain available.</div>
-        )}
         {tellerConfig?.configured && tellerConfig.environment === 'development' && (
           <div className="muted small">
             Teller Development has 100 total lifetime enrollments. Use Repair on an existing enrollment instead of connecting it again.
@@ -599,65 +598,97 @@ export default function CardsAccounts({ config, onChange }) {
           <div className="muted small" style={{ paddingTop: 6 }}>No institutions or CSV accounts linked yet.</div>
         )}
         {items.map((item) => (
-          <div className="acct" key={item.itemId}>
-            <div className="row between">
-              <div>
-                <strong>{item.institutionName || 'Institution'}</strong>{' '}
-                <span className="badge provider-badge">{item.provider}</span>{' '}
-                <span className="muted">· {item.accounts.length} account(s)</span>
-                <div className="muted small">
+          <details className="acct institution-accordion" key={item.itemId}>
+            <summary className="institution-summary">
+              <span className="institution-summary-copy">
+                <span className="institution-summary-name">
+                  <strong>{item.institutionName || 'Institution'}</strong>
+                  <span className="badge provider-badge">{item.provider}</span>
+                  {(item.capabilityWarning || item.subscriptionWarning || item.accountWarning) && (
+                    <span
+                      className="badge institution-attention-badge"
+                      role="img"
+                      aria-label="Needs attention"
+                      title="Needs attention"
+                    >
+                      ⚠
+                    </span>
+                  )}
+                </span>
+                <span className="muted small institution-last-synced">
                   last synced: {item.lastSyncedAt ? new Date(item.lastSyncedAt).toLocaleString() : 'never'}
                   {item.refreshPending ? ' · Stripe refresh pending' : ''}
+                </span>
+              </span>
+              <span className="institution-summary-side">
+                <span className="muted small">
+                  {item.accounts.length} account{item.accounts.length === 1 ? '' : 's'}
+                </span>
+                <span className="institution-chevron" aria-hidden="true">›</span>
+              </span>
+            </summary>
+            <div className="institution-details">
+              <div className="row between">
+                <div className="muted small institution-account-list">
+                  {item.accounts.map((account) => (
+                    `${account.name}${account.mask ? ' ••' + account.mask : ''}`
+                  )).join(' · ')}
+                </div>
+                <div className="row">
+                  {item.provider === 'teller' && (
+                    <button className="btn" disabled={busy || Boolean(tellerSetup)} onClick={() => startTeller(item.itemId)}>
+                      Repair
+                    </button>
+                  )}
+                  {item.provider !== 'csv' && (
+                    <button
+                      className="btn"
+                      disabled={busy || !item.transactionsSupported || (
+                        item.signConfirmationRequired && item.provider !== 'stripe'
+                      )}
+                      onClick={() => syncItem(item.itemId)}
+                    >
+                      {item.provider === 'stripe' && item.refreshPending ? '↻ Check refresh' : '↻ Sync'}
+                    </button>
+                  )}
+                  <button className="btn danger" disabled={busy} onClick={() => removeItem(item)}>Unlink</button>
                 </div>
               </div>
-              <div className="row">
-                {item.provider === 'teller' && (
-                  <button className="btn" disabled={busy || Boolean(tellerSetup)} onClick={() => startTeller(item.itemId)}>
-                    Repair
-                  </button>
-                )}
-                {item.provider !== 'csv' && (
-                  <button
-                    className="btn"
-                    disabled={busy || !item.transactionsSupported || (
-                      item.signConfirmationRequired && item.provider !== 'stripe'
-                    )}
-                    onClick={() => syncItem(item.itemId)}
-                  >
-                    {item.provider === 'stripe' && item.refreshPending ? '↻ Check refresh' : '↻ Sync'}
-                  </button>
-                )}
-                <button className="btn danger" disabled={busy} onClick={() => removeItem(item)}>Unlink</button>
-              </div>
+              {item.capabilityWarning && <div className="warning-box">⚠ {item.capabilityWarning}</div>}
+              {item.subscriptionWarning && <div className="warning-box">⚠ {item.subscriptionWarning}</div>}
+              {item.accountWarning && <div className="warning-box">⚠ {item.accountWarning}</div>}
+              {item.provider === 'stripe' && (
+                <StripeSignControl item={item} busy={busy} onChange={changeStripeSign} />
+              )}
+              {item.signConfirmationRequired && (
+                <ProviderSignPanel
+                  item={item}
+                  sample={samples[item.itemId]}
+                  busy={busy}
+                  onLoad={loadSamples}
+                  onConfirm={confirmProviderSign}
+                  onAcknowledgeEmpty={acknowledgeEmptySample}
+                />
+              )}
             </div>
-            <div className="muted small" style={{ marginTop: 4 }}>
-              {item.accounts.map((account) => `${account.name}${account.mask ? ' ••' + account.mask : ''}`).join(' · ')}
-            </div>
-            {item.capabilityWarning && <div className="warning-box">⚠ {item.capabilityWarning}</div>}
-            {item.subscriptionWarning && <div className="warning-box">⚠ {item.subscriptionWarning}</div>}
-            {item.accountWarning && <div className="warning-box">⚠ {item.accountWarning}</div>}
-            {item.provider === 'stripe' && (
-              <StripeSignControl item={item} busy={busy} onChange={changeStripeSign} />
-            )}
-            {item.signConfirmationRequired && (
-              <ProviderSignPanel
-                item={item}
-                sample={samples[item.itemId]}
-                busy={busy}
-                onLoad={loadSamples}
-                onConfirm={confirmProviderSign}
-                onAcknowledgeEmpty={acknowledgeEmptySample}
-              />
-            )}
-          </div>
+          </details>
         ))}
       </section>
 
       {pendingAccounts.length > 0 && (
         <section className="card-section pending-card-section">
           <div className="card-head">
-            <div className="name">Finish connected card setup</div>
-            <div className="row pending-setup-counts">
+            <div
+              ref={(node) => {
+                if (node) setupFocusTargets.current.set('pending-section-heading', node);
+                else setupFocusTargets.current.delete('pending-section-heading');
+              }}
+              className="name pending-setup-title"
+              tabIndex={-1}
+            >
+              Finish connected card setup
+            </div>
+            <div className="row pending-setup-counts" aria-live="polite">
               {activePendingAccounts.length > 0 && (
                 <span className="badge open">{activePendingAccounts.length} to confirm</span>
               )}
@@ -731,7 +762,11 @@ export default function CardsAccounts({ config, onChange }) {
                     type="button"
                     className="btn"
                     disabled={busy}
-                    onClick={() => setSetupDeferred(account.account_id, true)}
+                    onClick={(event) => setSetupDeferred(
+                      account.account_id,
+                      true,
+                      event.detail === 0
+                    )}
                   >
                     Not now
                   </button>

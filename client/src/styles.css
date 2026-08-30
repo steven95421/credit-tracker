@@ -114,8 +114,57 @@ select, .text-input {
   background: var(--bg); border: 1px solid var(--border); color: var(--text);
   border-radius: 9px; padding: 7px 10px; font-size: 14px;
 }
-.acct { padding: 8px 0; border-top: 1px solid var(--border); }
-.acct:first-child { border-top: none; }
+.acct { border-top: 1px solid var(--border); padding: 8px 0; }
+.institution-accordion { padding: 0; }
+.institution-accordion:first-of-type { border-top: none; }
+.institution-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.institution-summary::-webkit-details-marker { display: none; }
+.institution-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.institution-summary-copy { min-width: 0; }
+.institution-summary-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.institution-summary-name strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.institution-attention-badge { color: var(--amber); }
+.institution-last-synced { display: block; margin-top: 2px; }
+.institution-summary-side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.institution-chevron {
+  color: var(--muted);
+  font-size: 24px;
+  line-height: 1;
+  transition: transform 140ms ease;
+}
+.institution-accordion[open] .institution-chevron { transform: rotate(90deg); }
+.institution-details {
+  margin: 0 0 12px 8px;
+  padding: 2px 0 0 14px;
+  border-left: 2px solid var(--border);
+}
+.institution-account-list { min-width: 0; }
 .err { color: var(--red); font-size: 13px; margin: 6px 0; }
 .success { color: var(--green); font-size: 13px; margin: 6px 0; }
 .small { font-size: 12px; }
@@ -161,6 +210,11 @@ select, .text-input {
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+.pending-setup-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 .pending-setup-counts { justify-content: flex-end; }
 .pending-later-badge { background: var(--panel-2); }

@@ -52,6 +52,32 @@ export const mergeItemProviderData = (DB, itemId, patch) =>
      SET provider_data = json_patch(COALESCE(provider_data, '{}'), ?)
      WHERE item_id = ?`
   ).bind(JSON.stringify(patch || {}), itemId).run();
+export const setItemChargeSign = (DB, itemId, chargeSign, updatedAt) => DB.batch([
+  // Read the current sign inside the same D1 transaction that performs the
+  // inversion. Retried or concurrent requests for the same sign therefore do
+  // not flip stored transactions twice. A missing Stripe sign means negative.
+  DB.prepare(
+    `UPDATE transactions
+     SET amount = -amount
+     WHERE item_id = ?
+       AND COALESCE(
+         json_extract((SELECT provider_data FROM items WHERE item_id = ?), '$.chargeSign'),
+         'negative'
+       ) <> ?`
+  ).bind(itemId, itemId, chargeSign),
+  DB.prepare(
+    `UPDATE items
+     SET provider_data = json_patch(COALESCE(provider_data, '{}'), ?)
+     WHERE item_id = ?`
+  ).bind(JSON.stringify({
+    chargeSign,
+    chargeSignSource: 'user',
+    chargeSignUpdatedAt: updatedAt,
+    // Force the next sync to replay all history available from Stripe. JSON
+    // merge-patch removes this key when its value is null.
+    transactionRefreshes: null,
+  }), itemId),
+]);
 
 // accounts
 export const upsertAccount = (DB, account) =>

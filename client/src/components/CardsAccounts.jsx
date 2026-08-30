@@ -136,6 +136,35 @@ function ProviderSignPanel({ item, sample, busy, onLoad, onConfirm, onAcknowledg
   );
 }
 
+function StripeSignControl({ item, busy, onChange }) {
+  const current = item.chargeSign === 'positive' ? 'positive' : 'negative';
+  return (
+    <div className="stripe-sign-setting">
+      <div className="muted small">
+        Stripe purchases default to a negative (−) amount. Change this only if purchases and refunds appear reversed.
+      </div>
+      <div className="row sign-actions">
+        <button
+          className="btn"
+          disabled={busy || current === 'negative'}
+          aria-pressed={current === 'negative'}
+          onClick={() => onChange(item, 'negative')}
+        >
+          Purchases are − {current === 'negative' ? '(current)' : ''}
+        </button>
+        <button
+          className="btn"
+          disabled={busy || current === 'positive'}
+          aria-pressed={current === 'positive'}
+          onClick={() => onChange(item, 'positive')}
+        >
+          Purchases are + {current === 'positive' ? '(current)' : ''}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function CardsAccounts({ config, onChange }) {
   const [items, setItems] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -213,9 +242,9 @@ export default function CardsAccounts({ config, onChange }) {
       });
       const notes = [`Linked ${linked.accounts} Stripe credit-card account(s).`];
       notes.push('Confirm each card product below to start tracking its benefits.');
+      notes.push('Purchases default to a negative (−) amount; you can change this later per account.');
       if (linked.ignoredAccounts > 0) notes.push(`${linked.ignoredAccounts} unsupported or inactive account(s) were ignored.`);
       if (linked.refreshPending) notes.push('Stripe is preparing transaction history in the background.');
-      if (linked.signConfirmationRequired) notes.push('Confirm the purchase amount sign below before the first import.');
       if (!linked.webhookConfigured) notes.push('Run Sync after it finishes because the Stripe webhook is not configured yet.');
       if (linked.subscriptionErrors?.length) notes.push('At least one daily transaction subscription needs attention.');
       setMessage(notes.join(' '));
@@ -316,6 +345,26 @@ export default function CardsAccounts({ config, onChange }) {
       setMessage(subscriptionErrors.length > 0
         ? `Amount sign confirmed and ${providerLabel} transactions synced. Daily Stripe subscription failed; Sync will retry it.`
         : `Amount sign confirmed and ${providerLabel} transactions synced.`);
+      await afterMutation();
+    } catch (error) {
+      setErr(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeStripeSign = async (item, chargeSign) => {
+    if (item.chargeSign === chargeSign) return;
+    const symbol = chargeSign === 'positive' ? '+' : '−';
+    if (!confirm(`Use ${symbol} for Stripe purchases? Existing imported transactions will be recalculated and synced.`)) return;
+    setBusy(true);
+    setErr('');
+    try {
+      const result = await api.post(itemPath(item.itemId, '/stripe-sign'), { chargeSign });
+      const subscriptionErrors = result.subscription?.errors || [];
+      setMessage(subscriptionErrors.length > 0
+        ? `Stripe purchases now use ${symbol}. Transactions were recalculated; daily refresh subscription still needs a retry.`
+        : `Stripe purchases now use ${symbol}. Existing and available transactions were recalculated and synced.`);
       await afterMutation();
     } catch (error) {
       setErr(error.message);
@@ -549,6 +598,9 @@ export default function CardsAccounts({ config, onChange }) {
             {item.subscriptionWarning && <div className="warning-box">⚠ {item.subscriptionWarning}</div>}
             {item.accountWarning && <div className="warning-box">⚠ {item.accountWarning}</div>}
             {item.dataQualityWarning && <div className="warning-box">⚠ {item.dataQualityWarning}</div>}
+            {item.provider === 'stripe' && (
+              <StripeSignControl item={item} busy={busy} onChange={changeStripeSign} />
+            )}
             {item.signConfirmationRequired && (
               <ProviderSignPanel
                 item={item}

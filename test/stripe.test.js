@@ -4,6 +4,7 @@ import { createHmac } from 'node:crypto';
 import {
   accountRecord,
   createSession,
+  effectiveChargeSign,
   eligibleCreditCardAccounts,
   normalizeTransaction,
   stripeStatus,
@@ -27,6 +28,11 @@ test('Stripe configuration rejects missing or mixed-mode API keys', () => {
   });
   assert.equal(mixed.configured, false);
   assert.ok(mixed.missing.includes('matching Stripe key modes'));
+});
+
+test('Stripe purchases default to negative while preserving an explicit override', () => {
+  assert.equal(effectiveChargeSign({}), 'negative');
+  assert.equal(effectiveChargeSign({ chargeSign: 'positive' }), 'positive');
 });
 
 test('Stripe Session reuses the durable Customer instead of creating one per attempt', async () => {

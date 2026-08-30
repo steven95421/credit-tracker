@@ -54,6 +54,7 @@ const sessionHash = (req) => sha256Hex(req.headers.get('Authorization') || 'deve
 function itemView(item, accounts) {
   const provider = item.provider || PROVIDERS.PLAID;
   const data = parseProviderData(item);
+  const hasExplicitChargeSign = ['positive', 'negative'].includes(data.chargeSign);
   const transactionsSupported = provider !== PROVIDERS.TELLER
     || data.creditTransactionsSupported !== false;
   const inactiveStripeAccounts = provider === PROVIDERS.STRIPE
@@ -79,9 +80,11 @@ function itemView(item, accounts) {
     dataQualityWarning: provider === PROVIDERS.STRIPE
       ? 'Stripe supplies only a bank description here, not structured merchant, category, or MCC data. Automatic matches may need manual confirmation.'
       : null,
-    signConfirmationRequired: [PROVIDERS.TELLER, PROVIDERS.STRIPE].includes(provider)
+    chargeSign: provider === PROVIDERS.STRIPE ? stripe.effectiveChargeSign(data) : data.chargeSign || null,
+    chargeSignDefaulted: provider === PROVIDERS.STRIPE && !hasExplicitChargeSign,
+    signConfirmationRequired: provider === PROVIDERS.TELLER
       && transactionsSupported
-      && !['positive', 'negative'].includes(data.chargeSign),
+      && !hasExplicitChargeSign,
     accounts,
   };
 }
@@ -133,6 +136,11 @@ async function handleStripeComplete(env, req, nonce, sessionId, now) {
       },
       refreshPending,
     };
+    if (!['positive', 'negative'].includes(existingData.chargeSign)) {
+      providerData.chargeSign = stripe.DEFAULT_STRIPE_CHARGE_SIGN;
+      providerData.chargeSignSource = 'default';
+      providerData.chargeSignUpdatedAt = now();
+    }
     await db.insertItem(env.DB, {
       itemId,
       provider: PROVIDERS.STRIPE,
@@ -146,16 +154,13 @@ async function handleStripeComplete(env, req, nonce, sessionId, now) {
     const prior = await db.getAccountByExternal(env.DB, PROVIDERS.STRIPE, account.id);
     await db.upsertAccount(env.DB, stripe.accountRecord(account, itemId, prior));
     const saved = await db.getItem(env.DB, itemId);
-    const signConfirmationRequired = !['positive', 'negative'].includes(
-      parseProviderData(saved).chargeSign
-    );
-    const sync = signConfirmationRequired ? null : await providers.syncItem(env, saved);
+    const sync = await providers.syncItem(env, saved);
     linkedItems.push({
       itemId,
       accountId: account.id,
       institutionName: account.institution_name,
       refreshPending: refreshPending || Boolean(sync?.subscription?.refreshPending),
-      signConfirmationRequired,
+      signConfirmationRequired: false,
       sync,
     });
   }
@@ -538,31 +543,11 @@ async function handle(req, env, ctx) {
     const itemId = decodeId(match[1]);
     const item = await db.getItem(env.DB, itemId);
     if (!item || item.provider !== PROVIDERS.STRIPE) throw httpError(404, 'Stripe item not found');
-    const providerData = parseProviderData(item);
-    const { chargeSign, emptySampleAcknowledged = false } = await readJson(req);
-    if (!providerData.signSampleCheckedAt) {
-      throw httpError(
-        409,
-        'Check Stripe transaction samples before confirming the purchase sign',
-        'stripe.sign_sample_required'
-      );
-    }
-    if (!providerData.signSampleViewedAt && emptySampleAcknowledged !== true) {
-      throw httpError(
-        409,
-        'Confirm that you checked a statement separately when Stripe returns no sample transactions',
-        'stripe.empty_sample_acknowledgement_required'
-      );
-    }
+    const { chargeSign } = await readJson(req);
     if (!['positive', 'negative'].includes(chargeSign)) {
       throw httpError(400, 'chargeSign must be positive or negative');
     }
-    await db.mergeItemProviderData(env.DB, itemId, {
-      chargeSign,
-      ...(!providerData.signSampleViewedAt && emptySampleAcknowledged
-        ? { emptySampleAcknowledgedAt: now() }
-        : {}),
-    });
+    await db.setItemChargeSign(env.DB, itemId, chargeSign, now());
     return providers.syncItem(env, await db.getItem(env.DB, itemId));
   }
 

@@ -16,6 +16,14 @@ const MAX_PAGES = 100;
 const WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
 const encoder = new TextEncoder();
 
+export const DEFAULT_STRIPE_CHARGE_SIGN = 'negative';
+
+export function effectiveChargeSign(providerData = {}) {
+  return ['positive', 'negative'].includes(providerData.chargeSign)
+    ? providerData.chargeSign
+    : DEFAULT_STRIPE_CHARGE_SIGN;
+}
+
 const stripeError = (status, message, code, detail) =>
   Object.assign(new Error(message), { status, code, detail });
 
@@ -297,7 +305,7 @@ const refreshTransactions = (env, externalAccountId) =>
   });
 
 async function persistTransactions(env, item, account, afterRefresh) {
-  const chargeSign = parseProviderData(item).chargeSign;
+  const chargeSign = effectiveChargeSign(parseProviderData(item));
   const rows = await listTransactions(env, account.external_account_id, afterRefresh);
   const active = [];
   let voided = 0;
@@ -322,14 +330,14 @@ async function persistTransactions(env, item, account, afterRefresh) {
 export async function syncItem(env, item, options = {}) {
   const accounts = await db.listAccountsByItem(env.DB, item.item_id);
   const providerData = parseProviderData(item);
-  const signConfirmed = ['positive', 'negative'].includes(providerData.chargeSign);
+  const chargeSign = effectiveChargeSign(providerData);
+  const chargeSignDefaulted = !['positive', 'negative'].includes(providerData.chargeSign);
   const refreshCursors = { ...(providerData.transactionRefreshes || {}) };
   const accountStatuses = { ...(providerData.accountStatuses || {}) };
   let fetched = 0;
   let voided = 0;
   let completedRefreshes = 0;
   let pendingRefreshes = 0;
-  let succeededRefreshes = 0;
   let failedRefreshes = 0;
   let refreshesStarted = 0;
 
@@ -337,21 +345,18 @@ export async function syncItem(env, item, options = {}) {
     const remote = await retrieveAccount(env, account.external_account_id);
     accountStatuses[account.external_account_id] = remote.status;
     const refresh = remote.transaction_refresh;
-    if (refresh?.status === 'succeeded') succeededRefreshes += 1;
     if (refresh?.status === 'failed') failedRefreshes += 1;
     if (refresh?.status === 'succeeded' && refresh.id && refreshCursors[account.external_account_id] !== refresh.id) {
-      if (signConfirmed) {
-        const result = await persistTransactions(
-          env,
-          item,
-          account,
-          refreshCursors[account.external_account_id] || null
-        );
-        fetched += result.fetched;
-        voided += result.voided;
-        completedRefreshes += 1;
-        refreshCursors[account.external_account_id] = refresh.id;
-      }
+      const result = await persistTransactions(
+        env,
+        item,
+        account,
+        refreshCursors[account.external_account_id] || null
+      );
+      fetched += result.fetched;
+      voided += result.voided;
+      completedRefreshes += 1;
+      refreshCursors[account.external_account_id] = refresh.id;
     }
 
     if (refresh?.status === 'pending') pendingRefreshes += 1;
@@ -365,19 +370,22 @@ export async function syncItem(env, item, options = {}) {
     }
   }
 
+  const completedAt = new Date().toISOString();
   await db.mergeItemProviderData(env.DB, item.item_id, {
+    ...(chargeSignDefaulted ? {
+      chargeSign,
+      chargeSignSource: 'default',
+      chargeSignUpdatedAt: completedAt,
+    } : {}),
     transactionRefreshes: refreshCursors,
     accountStatuses,
     refreshPending: pendingRefreshes > 0,
-    ...(!signConfirmed && succeededRefreshes > 0
-      ? { signSampleAvailableAt: new Date().toISOString() }
-      : {}),
-    lastRefreshCheckAt: new Date().toISOString(),
+    lastRefreshCheckAt: completedAt,
   });
   if (completedRefreshes > 0) {
     await db.setCursor(env.DB, item.item_id, null, new Date().toISOString());
   }
-  const subscription = signConfirmed && providerData.transactionsSubscribed !== true
+  const subscription = providerData.transactionsSubscribed !== true
     ? await subscribeItem(env, await db.getItem(env.DB, item.item_id))
     : null;
   return {
@@ -387,7 +395,7 @@ export async function syncItem(env, item, options = {}) {
     pendingRefreshes,
     failedRefreshes,
     refreshesStarted,
-    signConfirmationRequired: !signConfirmed,
+    signConfirmationRequired: false,
     subscription,
   };
 }
@@ -537,25 +545,6 @@ export async function handleWebhookEvent(env, event) {
   if (!item) return { ignored: true, reason: 'item not linked locally' };
 
   if (event.type === 'financial_connections.account.refreshed_transactions') {
-    const providerData = parseProviderData(item);
-    if (!['positive', 'negative'].includes(providerData.chargeSign)) {
-      const refreshStatus = account.transaction_refresh?.status || 'unknown';
-      await db.mergeItemProviderData(env.DB, item.item_id, {
-        refreshPending: refreshStatus === 'pending',
-        transactionRefreshStatuses: {
-          ...(providerData.transactionRefreshStatuses || {}),
-          [account.id]: refreshStatus,
-        },
-        ...(refreshStatus === 'succeeded'
-          ? { signSampleAvailableAt: new Date().toISOString() }
-          : {}),
-      });
-      return {
-        synced: false,
-        signConfirmationRequired: true,
-        refreshStatus,
-      };
-    }
     return syncItem(env, item, { requestRefresh: false });
   }
 

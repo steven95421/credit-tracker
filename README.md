@@ -17,8 +17,9 @@ Worker in `worker/`; the older Express server is kept only as a Plaid-only legac
   bank description but no structured merchant name, category, or MCC, so Stripe benefit matching uses
   description text and may require manual confirmation. The Worker reuses one durable Stripe Customer;
   one-shot Session ids are never used as the permanent local item identity. Each collected Financial
-  Connections Account is stored as its own item, so sign confirmation, status, sync, and unlink remain
-  specific to one card.
+  Connections Account is stored as its own item, so amount direction, status, sync, and unlink remain
+  specific to one card. Stripe purchases default to a negative upstream amount; the setting can be
+  changed later, which recalculates stored rows and replays the available transaction history.
 - **Teller (legacy)** — Connect runs with a server-generated one-time nonce. The Worker verifies Teller's
   Ed25519 enrollment signature, encrypts the access token in D1, checks that the selected credit-card
   account advertises a transactions link, and syncs with a 10-day overlap.
@@ -74,8 +75,9 @@ legacy Express server.
 1. Open **Cards & Accounts** and connect a credit card with Stripe, use a configured fallback, or add
    a manual card. Stripe initially exposes only test institutions while using test API keys.
 2. Stripe prepares transaction history asynchronously. Wait for the signed webhook, or press
-   **Check refresh** / **Sync**. Then inspect real sample rows and confirm whether purchases use a
-   positive or negative amount; no Stripe transaction is stored before this confirmation.
+   **Check refresh** / **Sync**. Purchases default to a negative (−) Stripe amount and import without a
+   separate confirmation. If purchases and refunds appear reversed, change the amount direction on
+   that linked account; stored rows are recalculated and the available history is synced again.
 3. For a legacy Teller enrollment, load sample transactions and explicitly confirm whether a real
    purchase is positive or negative. No Teller transactions sync before this confirmation. If the
    initial sync window is empty, the UI requires an explicit acknowledgement that you checked a

@@ -110,6 +110,97 @@ export const getAccountByExternal = (DB, provider, externalId) =>
 export const deleteAccountsByItem = (DB, itemId) =>
   DB.prepare('DELETE FROM accounts WHERE item_id = ?').bind(itemId).run();
 
+export async function rebindProviderAccounts(DB, provider, bindings) {
+  if (!bindings.length) return [];
+  const statements = [];
+  for (const binding of bindings) {
+    statements.push(
+      // D1 rolls a batch back only when a statement fails. Make a stale
+      // precondition fail inside the transaction instead of discovering a
+      // zero-row UPDATE after the batch has already committed. json_extract
+      // is evaluated only when either stable row is no longer bound to the
+      // expected old (or idempotently, target) external id.
+      DB.prepare(
+        `SELECT CASE WHEN
+           EXISTS (
+             SELECT 1 FROM items
+             WHERE item_id = ? AND provider = ? AND external_item_id IN (?, ?)
+           )
+           AND EXISTS (
+             SELECT 1 FROM accounts
+             WHERE account_id = ? AND provider = ? AND item_id = ?
+               AND external_account_id IN (?, ?)
+           )
+         THEN 1 ELSE json_extract('provider account rebind precondition failed', '$') END
+         AS rebind_guard`
+      ).bind(
+        binding.itemId,
+        provider,
+        binding.previousExternalAccountId,
+        binding.externalAccountId,
+        binding.account.accountId,
+        provider,
+        binding.itemId,
+        binding.previousExternalAccountId,
+        binding.externalAccountId
+      ),
+      DB.prepare(
+        `UPDATE items
+         SET external_item_id = ?, institution_name = ?, provider_data = ?
+         WHERE item_id = ? AND provider = ? AND external_item_id IN (?, ?)`
+      ).bind(
+        binding.externalAccountId,
+        binding.institutionName,
+        JSON.stringify(binding.providerData || {}),
+        binding.itemId,
+        provider,
+        binding.previousExternalAccountId,
+        binding.externalAccountId
+      ),
+      DB.prepare(
+        `UPDATE accounts
+         SET external_account_id = ?, item_id = ?, name = ?, official_name = ?,
+             mask = ?, type = ?, subtype = ?
+         WHERE account_id = ? AND provider = ? AND item_id = ?
+           AND external_account_id IN (?, ?)`
+      ).bind(
+        binding.account.externalAccountId,
+        binding.account.itemId,
+        binding.account.name ?? null,
+        binding.account.officialName ?? null,
+        binding.account.mask ?? null,
+        binding.account.type ?? null,
+        binding.account.subtype ?? null,
+        binding.account.accountId,
+        provider,
+        binding.itemId,
+        binding.previousExternalAccountId,
+        binding.externalAccountId
+      )
+    );
+  }
+  let results;
+  try {
+    results = await DB.batch(statements);
+  } catch (error) {
+    if (/malformed JSON/i.test(error.message)) {
+      throw Object.assign(
+        new Error('Provider account rebind state changed before it could be committed; no rows were updated'),
+        { status: 409, code: `${provider}.relink_rebind_conflict` }
+      );
+    }
+    throw error;
+  }
+  const incomplete = bindings.some((_, index) => (
+    Number(results[index * 3 + 1]?.meta?.changes || 0) !== 1
+      || Number(results[index * 3 + 2]?.meta?.changes || 0) !== 1
+  ));
+  if (incomplete) {
+    throw new Error('Provider account rebind did not update every expected item and account');
+  }
+  return results;
+}
+
 // transactions
 const txnStatement = (DB, txn) =>
   DB.prepare(
@@ -149,6 +240,11 @@ export const deleteTxnByExternal = (DB, provider, externalId) =>
     .bind(provider, externalId).run();
 export const deleteTxnsByItem = (DB, itemId) =>
   DB.prepare('DELETE FROM transactions WHERE item_id = ?').bind(itemId).run();
+export const countTransactionsByItem = async (DB, itemId) => {
+  const row = await DB.prepare('SELECT COUNT(*) AS count FROM transactions WHERE item_id = ?')
+    .bind(itemId).first();
+  return Number(row?.count || 0);
+};
 export const deletePendingTxnsInWindow = (DB, accountId, start, end) =>
   DB.prepare(
     'DELETE FROM transactions WHERE account_id = ? AND pending = 1 AND date >= ? AND date <= ?'

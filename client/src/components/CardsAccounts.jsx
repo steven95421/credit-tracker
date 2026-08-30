@@ -356,6 +356,8 @@ export default function CardsAccounts({ config, onChange }) {
       if (linked.refreshPending) notes.push('Stripe is preparing transaction history in the background.');
       if (!linked.webhookConfigured) notes.push('Run Sync after it finishes because the Stripe webhook is not configured yet.');
       if (linked.subscriptionErrors?.length) notes.push('At least one daily transaction subscription needs attention.');
+      if (linked.syncErrors?.length) notes.push('The bank was reconnected, but Sync needs to be retried for at least one card.');
+      if (linked.unmatchedAccounts?.length) notes.push(`${linked.unmatchedAccounts.length} returned card(s) could not be matched automatically.`);
       setMessage(notes.join(' '));
       await afterMutation();
     } catch (error) {

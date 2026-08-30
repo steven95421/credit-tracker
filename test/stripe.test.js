@@ -7,7 +7,10 @@ import {
   createSession,
   effectiveChargeSign,
   eligibleCreditCardAccounts,
+  isRelinkCohortMember,
   normalizeTransaction,
+  reconcileRelinkedAccounts,
+  relinkRequiresHistoryMigration,
   relinkedProviderData,
   stripeStatus,
   validateCollectedSession,
@@ -200,6 +203,7 @@ test('Stripe relink completion accepts a newly minted authorization', () => {
 
 test('Stripe relink resets subscriptions while preserving card identity inputs and settings', () => {
   const existingData = {
+    authorizationId: 'fcauth_old',
     chargeSign: 'positive',
     transactionsSubscribed: true,
     transactionSubscriptions: { fca_amex: true },
@@ -213,14 +217,33 @@ test('Stripe relink resets subscriptions while preserving card identity inputs a
     webhookConfigured: true,
     account: { id: 'fca_amex', status: 'active' },
     refreshPending: true,
+    previousExternalAccountId: 'fca_old',
   });
   assert.equal(next.chargeSign, 'positive');
   assert.equal(next.manualSetting, 'keep-me');
   assert.equal(next.authorizationId, 'fcauth_reconsented');
   assert.equal(next.transactionsSubscribed, false);
   assert.deepEqual(next.transactionSubscriptions, {});
+  assert.deepEqual(next.transactionRefreshes, {});
+  assert.equal(next.relinkBaselinePending, undefined);
   assert.deepEqual(next.subscriptionErrors, existingData.subscriptionErrors);
   assert.equal(next.accountStatuses.fca_amex, 'active');
+
+  const sameAccountNewAuthorization = relinkedProviderData({
+    authorizationId: 'fcauth_old',
+    transactionRefreshes: { fca_amex: 'fctxnref_old' },
+  }, {
+    customerId: 'cus_durable',
+    sessionId: 'fcsess_relink',
+    authorizationId: 'fcauth_reconsented',
+    webhookConfigured: true,
+    account: { id: 'fca_amex', status: 'active' },
+    refreshPending: false,
+    previousExternalAccountId: 'fca_amex',
+  });
+  assert.deepEqual(sameAccountNewAuthorization.transactionRefreshes, {
+    fca_amex: 'fctxnref_old',
+  });
 
   const prior = { account_id: 'stable-local-account-id' };
   const record = accountRecord({
@@ -233,6 +256,119 @@ test('Stripe relink resets subscriptions while preserving card identity inputs a
   }, 'stable-item-id', prior);
   assert.equal(record.accountId, 'stable-local-account-id');
   assert.equal(record.itemId, 'stable-item-id');
+});
+
+test('Stripe relink reconciles new account ids only by unique bank, name, and last4', () => {
+  const existing = [
+    {
+      item: { item_id: 'item-blue', institution_name: 'American Express' },
+      account: {
+        account_id: 'local-blue', external_account_id: 'fca_old_blue',
+        name: 'Blue Cash Everyday', official_name: 'American Express', mask: '1003',
+      },
+    },
+    {
+      item: { item_id: 'item-platinum', institution_name: 'American Express' },
+      account: {
+        account_id: 'local-platinum', external_account_id: 'fca_old_platinum',
+        name: 'Platinum Card', official_name: 'American Express', mask: '1003',
+      },
+    },
+    {
+      item: { item_id: 'item-platinum-2', institution_name: 'American Express' },
+      account: {
+        account_id: 'local-platinum-2', external_account_id: 'fca_old_platinum_2',
+        name: 'Platinum Card', official_name: 'American Express', mask: '3001',
+      },
+    },
+  ];
+  const result = reconcileRelinkedAccounts([
+    { id: 'fca_new_blue', institution_name: 'American Express', display_name: 'Blue Cash Everyday', last4: '1003' },
+    { id: 'fca_new_platinum', institution_name: 'American Express', display_name: 'Platinum Card', last4: '3001' },
+  ], existing);
+
+  assert.equal(result.ambiguous.length, 0);
+  assert.equal(result.unmatched.length, 0);
+  assert.deepEqual(result.matches.map((match) => [
+    match.remote.id,
+    match.connection.account.account_id,
+    match.matchedBy,
+  ]), [
+    ['fca_new_blue', 'local-blue', 'identity'],
+    ['fca_new_platinum', 'local-platinum-2', 'identity'],
+  ]);
+});
+
+test('Stripe relink scopes modern rows by authorization and legacy rows by their Link Session', () => {
+  assert.equal(isRelinkCohortMember(
+    { authorizationId: 'fcauth_old', sessionId: 'fcsess_other' },
+    { authorizationId: 'fcauth_old', sessionId: 'fcsess_anchor' },
+    'fcauth_old'
+  ), true);
+  assert.equal(isRelinkCohortMember(
+    { authorizationId: 'fcauth_other', sessionId: 'fcsess_anchor' },
+    { authorizationId: 'fcauth_old', sessionId: 'fcsess_anchor' },
+    'fcauth_old'
+  ), false);
+  assert.equal(isRelinkCohortMember(
+    { sessionId: 'fcsess_legacy' },
+    { sessionId: 'fcsess_legacy' },
+    'fcauth_old'
+  ), true);
+  assert.equal(isRelinkCohortMember(
+    { sessionId: 'fcsess_legacy' },
+    { authorizationId: 'fcauth_old', sessionId: 'fcsess_legacy' },
+    'fcauth_old'
+  ), false);
+});
+
+test('Stripe relink refuses ambiguous identity matches instead of changing a card', () => {
+  const duplicate = (accountId, externalId) => ({
+    item: { item_id: `item-${accountId}`, institution_name: 'American Express' },
+    account: {
+      account_id: accountId,
+      external_account_id: externalId,
+      name: 'Platinum Card',
+      official_name: 'American Express',
+      mask: '1003',
+    },
+  });
+  const result = reconcileRelinkedAccounts([
+    { id: 'fca_new', institution_name: 'American Express', display_name: 'Platinum Card', last4: '1003' },
+  ], [duplicate('local-one', 'fca_old_one'), duplicate('local-two', 'fca_old_two')]);
+  assert.equal(result.matches.length, 0);
+  assert.equal(result.ambiguous.length, 1);
+});
+
+test('Stripe relink refuses duplicate remote identities instead of choosing by response order', () => {
+  const local = {
+    item: { item_id: 'item-platinum', institution_name: 'American Express' },
+    account: {
+      account_id: 'local-platinum',
+      external_account_id: 'fca_old',
+      name: 'Platinum Card',
+      official_name: 'American Express',
+      mask: '1003',
+    },
+  };
+  const remote = (id) => ({
+    id,
+    institution_name: 'American Express',
+    display_name: 'Platinum Card',
+    last4: '1003',
+  });
+  const result = reconcileRelinkedAccounts(
+    [remote('fca_new_one'), remote('fca_new_two')],
+    [local]
+  );
+  assert.equal(result.matches.length, 0);
+  assert.equal(result.ambiguous.length, 2);
+});
+
+test('Stripe relink blocks changed account ids only when local history exists', () => {
+  assert.equal(relinkRequiresHistoryMigration('fca_old', 'fca_new', 0), false);
+  assert.equal(relinkRequiresHistoryMigration('fca_old', 'fca_new', 1), true);
+  assert.equal(relinkRequiresHistoryMigration('fca_same', 'fca_same', 100), false);
 });
 
 test('Stripe credit-card debits become canonical positive purchases', () => {

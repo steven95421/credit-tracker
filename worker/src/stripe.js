@@ -275,18 +275,22 @@ export function relinkedProviderData(existingData, {
   webhookConfigured,
   account,
   refreshPending,
+  previousExternalAccountId = account.id,
 }) {
+  const externalAccountIdChanged = previousExternalAccountId !== account.id;
   return {
     ...existingData,
     customerId,
     sessionId,
     authorizationId,
     webhookConfigured,
-    accountStatuses: {
-      ...(existingData.accountStatuses || {}),
-      [account.id]: account.status,
-    },
+    // A Stripe Item contains exactly one app account. Replacing these maps
+    // drops stale keys when a new Authorization creates a new Account id.
+    accountStatuses: { [account.id]: account.status },
     refreshPending,
+    transactionRefreshes: externalAccountIdChanged
+      ? {}
+      : { ...(existingData.transactionRefreshes || {}) },
     // A new authorization needs a fresh daily-transaction subscription even
     // when the old authorization had subscribed successfully. Keep prior
     // errors until subscribeItem records the outcome of this new attempt.
@@ -301,6 +305,100 @@ export const eligibleCreditCardAccounts = (accounts) => (accounts || []).filter(
     && Array.isArray(account.permissions)
     && account.permissions.includes('transactions')
 );
+
+const normalizeRelinkIdentityPart = (value) => String(value || '')
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]/g, '');
+
+export function relinkAccountMatchKey(account, institutionName = null) {
+  const institution = normalizeRelinkIdentityPart(
+    account.institution_name || account.official_name || institutionName
+  );
+  const name = normalizeRelinkIdentityPart(
+    account.display_name
+      || account.name
+      || account.institution_name
+      || account.official_name
+      || institutionName
+  );
+  const last4 = String(account.last4 || account.mask || '').trim();
+  if (!institution || !name || !last4) return null;
+  return `${institution}|${name}|${last4}`;
+}
+
+export const relinkRequiresHistoryMigration = (
+  previousExternalAccountId,
+  nextExternalAccountId,
+  storedTransactionCount
+) => previousExternalAccountId !== nextExternalAccountId
+  && Number(storedTransactionCount) > 0;
+
+export function isRelinkCohortMember(candidateData, anchorData, priorAuthorization) {
+  if (candidateData.authorizationId) {
+    return candidateData.authorizationId === priorAuthorization;
+  }
+  return !anchorData.authorizationId
+    && Boolean(anchorData.sessionId)
+    && candidateData.sessionId === anchorData.sessionId;
+}
+
+export function reconcileRelinkedAccounts(remoteAccounts, existingConnections) {
+  const remotes = remoteAccounts || [];
+  const connections = existingConnections || [];
+  const usedLocalAccountIds = new Set();
+  const handledRemoteIndexes = new Set();
+  const matches = [];
+  const unmatched = [];
+  const ambiguous = [];
+
+  const remoteIdCounts = new Map();
+  for (const remote of remotes) {
+    remoteIdCounts.set(remote.id, (remoteIdCounts.get(remote.id) || 0) + 1);
+  }
+  for (const [index, remote] of remotes.entries()) {
+    const direct = connections.filter(
+      (connection) => connection.account.external_account_id === remote.id
+    );
+    if ((remoteIdCounts.get(remote.id) || 0) > 1 || direct.length > 1) {
+      ambiguous.push({ remote, candidates: direct });
+      handledRemoteIndexes.add(index);
+      continue;
+    }
+    if (direct.length === 1) {
+      usedLocalAccountIds.add(direct[0].account.account_id);
+      matches.push({ remote, connection: direct[0], matchedBy: 'external_id' });
+      handledRemoteIndexes.add(index);
+    }
+  }
+
+  const remoteKeyCounts = new Map();
+  for (const [index, remote] of remotes.entries()) {
+    if (handledRemoteIndexes.has(index)) continue;
+    const key = relinkAccountMatchKey(remote);
+    if (key) remoteKeyCounts.set(key, (remoteKeyCounts.get(key) || 0) + 1);
+  }
+
+  for (const [index, remote] of remotes.entries()) {
+    if (handledRemoteIndexes.has(index)) continue;
+    const remoteKey = relinkAccountMatchKey(remote);
+    const candidates = remoteKey ? connections.filter((connection) => (
+      !usedLocalAccountIds.has(connection.account.account_id)
+      && relinkAccountMatchKey(connection.account, connection.item.institution_name) === remoteKey
+    )) : [];
+    if ((remoteKeyCounts.get(remoteKey) || 0) > 1 || candidates.length > 1) {
+      ambiguous.push({ remote, candidates });
+    } else if (candidates.length === 1) {
+      usedLocalAccountIds.add(candidates[0].account.account_id);
+      matches.push({ remote, connection: candidates[0], matchedBy: 'identity' });
+    } else {
+      unmatched.push(remote);
+    }
+  }
+
+  return { matches, unmatched, ambiguous };
+}
 
 export async function listSessionAccounts(env, session, apiVersion = null) {
   const accounts = [...(session?.accounts?.data || [])];
@@ -473,7 +571,9 @@ export async function syncItem(env, item, options = {}) {
     accountStatuses[account.external_account_id] = remote.status;
     const refresh = remote.transaction_refresh;
     if (refresh?.status === 'failed') failedRefreshes += 1;
-    if (refresh?.status === 'succeeded' && refresh.id && refreshCursors[account.external_account_id] !== refresh.id) {
+    if (refresh?.status === 'succeeded'
+        && refresh.id
+        && refreshCursors[account.external_account_id] !== refresh.id) {
       const result = await persistTransactions(
         env,
         item,

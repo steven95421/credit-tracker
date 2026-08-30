@@ -197,6 +197,7 @@ async function handleStripeRelinkComplete(env, req, itemId, nonce, sessionId, no
   if (anchorAccounts.length !== 1) {
     throw httpError(409, 'Stripe relink requires exactly one account for the selected connection');
   }
+  const anchorData = parseProviderData(anchorItem);
 
   // Consume the one-time, session-bound nonce before making any Stripe calls.
   // A transient failure simply requires starting a fresh relink session.
@@ -224,23 +225,92 @@ async function handleStripeRelinkComplete(env, req, itemId, nonce, sessionId, no
     stripeInfo.relinkApiVersion
   );
   const relinkAuthorization = session.relink_result.authorization;
+  const priorAuthorization = session.relink_options.authorization;
   const eligible = stripe.eligibleCreditCardAccounts(rawAccounts).filter(
     (account) => account.authorization === relinkAuthorization
+      && account.account_holder?.type === 'customer'
+      && account.account_holder.customer === customerId
   );
-  const reconnectable = [];
-  for (const account of eligible) {
-    const item = await db.getItemByExternal(env.DB, PROVIDERS.STRIPE, account.id);
-    if (item) reconnectable.push({ account, item });
+
+  const existingConnections = [];
+  for (const item of await db.listItemsByProvider(env.DB, PROVIDERS.STRIPE)) {
+    const data = parseProviderData(item);
+    if (data.customerId && data.customerId !== customerId) continue;
+    // A Customer can have several unrelated bank authorizations. Newer rows
+    // are grouped by Authorization; legacy rows did not receive that preview
+    // field, so fall back to the original Link Session that created the group.
+    if (!stripe.isRelinkCohortMember(data, anchorData, priorAuthorization)
+        && item.item_id !== itemId) continue;
+    const itemAccounts = await db.listAccountsByItem(env.DB, item.item_id);
+    if (itemAccounts.length === 1) {
+      existingConnections.push({ item, account: itemAccounts[0] });
+    }
   }
-  if (reconnectable.length === 0) {
-    throw httpError(409, 'Stripe did not reactivate any linked credit-card accounts');
+  const reconciliation = stripe.reconcileRelinkedAccounts(eligible, existingConnections);
+  const relinkDetail = {
+    rawAccounts: rawAccounts.length,
+    eligibleAccounts: eligible.length,
+    candidateAccounts: existingConnections.length,
+    matchedAccounts: reconciliation.matches.length,
+    authorizationChanged: priorAuthorization !== relinkAuthorization,
+    unmatched: reconciliation.unmatched.slice(0, 20).map((account) => ({
+      institutionName: account.institution_name || null,
+      displayName: account.display_name || null,
+      last4: account.last4 || null,
+    })),
+    ambiguous: reconciliation.ambiguous.slice(0, 20).map(({ remote, candidates }) => ({
+      institutionName: remote.institution_name || null,
+      displayName: remote.display_name || null,
+      last4: remote.last4 || null,
+      candidateCount: candidates.length,
+    })),
+  };
+  if (reconciliation.ambiguous.length > 0) {
+    throw httpError(
+      409,
+      'Stripe returned cards that cannot be matched safely. No card assignments were changed.',
+      'stripe.relink_match_ambiguous',
+      relinkDetail
+    );
+  }
+  if (reconciliation.matches.length === 0) {
+    throw httpError(
+      409,
+      'Stripe reconnected the bank, but none of the returned cards matched an existing card by bank, name, and last four digits.',
+      'stripe.relink_match_failed',
+      relinkDetail
+    );
+  }
+  if (!reconciliation.matches.some((match) => match.connection.item.item_id === itemId)) {
+    throw httpError(
+      409,
+      'Stripe reconnected the bank, but the selected card could not be matched safely. No card assignments were changed.',
+      'stripe.relink_anchor_unmatched',
+      relinkDetail
+    );
   }
 
-  const linkedItems = [];
-  for (const { account, item } of reconnectable) {
+  const rebinds = [];
+  const historyMigrationRequired = [];
+  for (const { remote: account, connection } of reconciliation.matches) {
+    const { item, account: prior } = connection;
     const existingData = parseProviderData(item);
     const refreshPending = !account.transaction_refresh
       || account.transaction_refresh.status === 'pending';
+    const storedTransactionCount = await db.countTransactionsByItem(env.DB, item.item_id);
+    if (stripe.relinkRequiresHistoryMigration(
+      prior.external_account_id,
+      account.id,
+      storedTransactionCount
+    )) {
+      historyMigrationRequired.push({
+        institutionName: account.institution_name || null,
+        displayName: account.display_name || null,
+        last4: account.last4 || null,
+        storedTransactionCount,
+      });
+      continue;
+    }
     const providerData = stripe.relinkedProviderData(existingData, {
       customerId,
       sessionId: session.id,
@@ -248,30 +318,50 @@ async function handleStripeRelinkComplete(env, req, itemId, nonce, sessionId, no
       webhookConfigured: stripeInfo.webhookConfigured,
       account,
       refreshPending,
+      previousExternalAccountId: prior.external_account_id,
     });
-    await db.insertItem(env.DB, {
+    rebinds.push({
       itemId: item.item_id,
-      provider: PROVIDERS.STRIPE,
-      externalItemId: account.id,
-      accessToken: item.access_token,
-      institutionId: item.institution_id,
+      previousExternalAccountId: prior.external_account_id,
+      externalAccountId: account.id,
       institutionName: account.institution_name || item.institution_name,
       providerData,
-      createdAt: item.created_at,
+      account: stripe.accountRecord(account, item.item_id, prior),
+      refreshPending,
+      identityChanged: prior.external_account_id !== account.id,
     });
-    const prior = await db.getAccountByExternal(env.DB, PROVIDERS.STRIPE, account.id);
-    await db.upsertAccount(env.DB, stripe.accountRecord(account, item.item_id, prior));
-    const sync = await providers.syncItem(
-      env,
-      await db.getItem(env.DB, item.item_id),
-      { requestRefresh: true }
+  }
+  if (historyMigrationRequired.length > 0) {
+    throw httpError(
+      409,
+      'Stripe returned new account ids for cards that already have transaction history. No cards or transactions were changed.',
+      'stripe.relink_history_migration_required',
+      { ...relinkDetail, historyMigrationRequired }
     );
+  }
+  await db.rebindProviderAccounts(env.DB, PROVIDERS.STRIPE, rebinds);
+
+  const linkedItems = [];
+  for (const rebind of rebinds) {
+    let sync = null;
+    let syncError = null;
+    try {
+      sync = await providers.syncItem(
+        env,
+        await db.getItem(env.DB, rebind.itemId),
+        { requestRefresh: true }
+      );
+    } catch (error) {
+      syncError = error.message;
+    }
     linkedItems.push({
-      itemId: item.item_id,
-      accountId: account.id,
-      institutionName: account.institution_name,
-      refreshPending: refreshPending || Boolean(sync?.subscription?.refreshPending),
+      itemId: rebind.itemId,
+      accountId: rebind.externalAccountId,
+      institutionName: rebind.institutionName,
+      refreshPending: rebind.refreshPending || Boolean(sync?.subscription?.refreshPending),
+      identityChanged: rebind.identityChanged,
       sync,
+      syncError,
     });
   }
 
@@ -283,6 +373,9 @@ async function handleStripeRelinkComplete(env, req, itemId, nonce, sessionId, no
     webhookConfigured: stripeInfo.webhookConfigured,
     ignoredAccounts: rawAccounts.length - linkedItems.length,
     subscriptionErrors: linkedItems.flatMap((item) => item.sync?.subscription?.errors || []),
+    syncErrors: linkedItems.map((item) => item.syncError).filter(Boolean),
+    reboundAccounts: linkedItems.filter((item) => item.identityChanged).length,
+    unmatchedAccounts: relinkDetail.unmatched,
   };
 }
 

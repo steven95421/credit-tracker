@@ -4,6 +4,8 @@ import Dashboard from './components/Dashboard.jsx';
 import CardsAccounts from './components/CardsAccounts.jsx';
 import Login from './components/Login.jsx';
 
+const FEEDBACK_URL = 'https://github.com/steven95421/credit-tracker/issues/new?title=Feedback%3A%20&body=What%20would%20you%20like%20us%20to%20improve%3F%0A%0A%3E%20Please%20do%20not%20include%20account%2C%20card%2C%20or%20transaction%20details.';
+
 export default function App() {
   // land on Cards & Accounts when returning from a Plaid OAuth redirect
   const [tab, setTab] = useState(() =>
@@ -105,11 +107,22 @@ export default function App() {
             <span>Credit Tracker</span>
           </button>
         </h1>
-        {config && configuredProviderLabels.length > 0 && (
-          <span className="env-pill">
-            {configuredProviderLabels.join(' · ')}
-          </span>
-        )}
+        <div className="top-actions">
+          {config && configuredProviderLabels.length > 0 && (
+            <span className="env-pill">
+              {configuredProviderLabels.join(' · ')}
+            </span>
+          )}
+          <a
+            className="feedback-cta"
+            href={FEEDBACK_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Send product feedback (opens GitHub in a new tab)"
+          >
+            <span aria-hidden="true">💬</span> Feedback
+          </a>
+        </div>
       </header>
 
       {needLogin || !config ? (

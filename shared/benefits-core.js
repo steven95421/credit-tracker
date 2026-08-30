@@ -6,6 +6,7 @@
 // ---------- calendar helpers (YYYY-MM-DD) ----------
 const DAY = 86400000;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const DEFAULT_HISTORY_LIMITS = Object.freeze({ monthly: 3, quarterly: 3 });
 
 export function todayYMD(now = new Date(), timeZone = null) {
   if (timeZone) {
@@ -90,6 +91,67 @@ export function periodWindow(period, today = todayYMD(), anchor = null) {
   }
 }
 
+/**
+ * Return the most recent completed calendar windows for a recurring period,
+ * newest first and never crossing into a prior calendar year.
+ */
+export function recentCompletedPeriodWindows(period, today = todayYMD(), limit = 3) {
+  const t = parseYMD(today);
+  const year = t.getUTCFullYear();
+  const month = t.getUTCMonth() + 1;
+  const references = [];
+
+  if (period === 'monthly') {
+    for (let candidate = 1; candidate < month; candidate++) {
+      references.push(fmt(year, candidate, 1));
+    }
+  } else if (period === 'quarterly') {
+    const currentQuarter = Math.floor((month - 1) / 3) + 1;
+    for (let quarter = 1; quarter < currentQuarter; quarter++) {
+      references.push(fmt(year, (quarter - 1) * 3 + 1, 1));
+    }
+  }
+
+  const count = Math.max(0, Math.trunc(Number(limit) || 0));
+  if (count === 0) return [];
+  return references
+    .slice(-count)
+    .reverse()
+    .map((reference) => periodWindow(period, reference));
+}
+
+/**
+ * Return the single transaction range needed to render both the current card
+ * status and its compact current-year monthly/quarterly history. Workers can
+ * fetch this range once, then satisfy each status snapshot from memory.
+ */
+export function statusDateRangeForCard(
+  card,
+  products,
+  today = todayYMD(),
+  limits = DEFAULT_HISTORY_LIMITS
+) {
+  const product = products.find((candidate) => candidate.key === card.product_key);
+  const benefits = product?.benefits || [];
+  if (benefits.length === 0) return null;
+
+  const availablePeriods = new Set(benefits.map((benefit) => benefit.period));
+  const referenceDates = [today];
+  for (const period of ['monthly', 'quarterly']) {
+    if (!availablePeriods.has(period)) continue;
+    referenceDates.push(...recentCompletedPeriodWindows(period, today, limits[period])
+      .map((window) => window.end));
+  }
+
+  const windows = referenceDates.flatMap((referenceDate) => benefits.map((benefit) => (
+    periodWindow(benefit.period, referenceDate, benefit.anchor)
+  )));
+  return {
+    start: windows.reduce((value, window) => value < window.start ? value : window.start, windows[0].start),
+    end: windows.reduce((value, window) => value > window.end ? value : window.end, windows[0].end),
+  };
+}
+
 export function daysUntil(endYMD, today = todayYMD()) {
   return Math.round((parseYMD(endYMD) - parseYMD(today)) / DAY);
 }
@@ -100,6 +162,31 @@ function benefitAmount(benefit, today) {
     ?? benefit.amountByMonth?.[today.slice(5, 7)];
   const amount = Number(override ?? benefit.amount);
   return Number.isFinite(amount) ? amount : 0;
+}
+
+const ANNUAL_REFERENCE_MONTHS = Object.freeze({
+  monthly: Object.freeze([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+  quarterly: Object.freeze([3, 6, 9, 12]),
+  semiannual: Object.freeze([6, 12]),
+  annual: Object.freeze([12]),
+});
+
+/**
+ * Annualize only the dollar-denominated credits in the product catalog. This
+ * deliberately excludes points, free nights, status, lounge access, and other
+ * perks whose value is not represented as a tracked credit.
+ */
+export function annualCreditValueForProduct(product, year = todayYMD().slice(0, 4)) {
+  const parsedYear = Math.trunc(Number(year));
+  const valueYear = Number.isFinite(parsedYear) ? parsedYear : Number(todayYMD().slice(0, 4));
+  const total = (product?.benefits || []).reduce((productTotal, benefit) => {
+    const referenceMonths = ANNUAL_REFERENCE_MONTHS[benefit.period]
+      || ANNUAL_REFERENCE_MONTHS.monthly;
+    return productTotal + referenceMonths.reduce((benefitTotal, month) => (
+      benefitTotal + benefitAmount(benefit, fmt(valueYear, month, 1))
+    ), 0);
+  }, 0);
+  return Math.round(total * 100) / 100;
 }
 
 const CREDIT_WORDS = /\b(credit|rebate|reimburse(?:ment|d)?|benefit|offer|statement adjustment)\b/;
@@ -375,6 +462,9 @@ const round2 = (n) => Math.round(n * 100) / 100;
  */
 export async function statusForCard(card, products, deps, today = todayYMD()) {
   const product = products.find((p) => p.key === card.product_key) || null;
+  const configuredAnnualFee = Number(product?.annualFee);
+  const annualFee = Number.isFinite(configuredAnnualFee) ? configuredAnnualFee : null;
+  const annualCreditValue = annualCreditValueForProduct(product, today.slice(0, 4));
   const benefitEntries = (product?.benefits || []).map((benefit) => ({
     benefit,
     amount: benefitAmount(benefit, today),
@@ -448,10 +538,40 @@ export async function statusForCard(card, products, deps, today = todayYMD()) {
     productName: product?.name || card.product_key,
     issuer: product?.issuer || '',
     displayName: card.display_name || product?.name || card.product_key,
+    annualFee,
+    annualCreditValue,
     benefits,
     totalRemaining,
     linked: Boolean(card.account_id),
     attributionCollisionCount: attribution.collisionCount,
     attributionAmbiguousCount: attribution.ambiguousCount,
   };
+}
+
+/**
+ * Build a compact set of completed monthly/quarterly benefit windows. Each
+ * snapshot uses the same attribution engine as the current dashboard, while
+ * callers can keep this history collapsed so it does not lengthen every card.
+ */
+export async function recentPeriodHistoryForCard(
+  card,
+  products,
+  deps,
+  today = todayYMD(),
+  limits = DEFAULT_HISTORY_LIMITS
+) {
+  const history = [];
+  const product = products.find((candidate) => candidate.key === card.product_key);
+  const availablePeriods = new Set((product?.benefits || []).map((benefit) => benefit.period));
+  for (const period of ['monthly', 'quarterly']) {
+    if (!availablePeriods.has(period)) continue;
+    const windows = recentCompletedPeriodWindows(period, today, limits[period]);
+    for (const window of windows) {
+      const snapshot = await statusForCard(card, products, deps, window.end);
+      history.push(...snapshot.benefits.filter((benefit) => (
+        benefit.period === period && benefit.periodKey === window.key
+      )));
+    }
+  }
+  return history;
 }

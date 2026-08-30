@@ -1,7 +1,12 @@
 // Credit Tracker API on Cloudflare Workers + D1.
 // UI lives on GitHub Pages; auth = Google Sign-In (email allowlist), no passwords stored.
 import catalogRaw from '../../shared/catalog.json';
-import { statusForCard, todayYMD } from '../../shared/benefits-core.js';
+import {
+  recentPeriodHistoryForCard,
+  statusDateRangeForCard,
+  statusForCard,
+  todayYMD,
+} from '../../shared/benefits-core.js';
 import {
   canonicalTransaction,
   localId,
@@ -362,12 +367,22 @@ async function handleStripeRelinkComplete(env, req, itemId, nonce, sessionId, no
       identityChanged: rebind.identityChanged,
       sync,
       syncError,
+      verifiedStatus: sync?.accountStatuses?.[rebind.externalAccountId] || null,
     });
   }
 
+  const activeAccounts = linkedItems.filter((item) => item.verifiedStatus === 'active').length;
+  const inactiveAccounts = linkedItems.filter((item) => item.verifiedStatus === 'inactive').length;
+  const unverifiedAccounts = linkedItems.length - activeAccounts - inactiveAccounts;
+
   return {
-    reconnected: true,
+    authorizationCompleted: true,
+    reconnected: linkedItems.length > 0
+      && activeAccounts === linkedItems.length,
     accounts: linkedItems.length,
+    activeAccounts,
+    inactiveAccounts,
+    unverifiedAccounts,
     institutionName: [...new Set(linkedItems.map((item) => item.institutionName).filter(Boolean))].join(' / '),
     refreshPending: linkedItems.some((item) => item.refreshPending),
     webhookConfigured: stripeInfo.webhookConfigured,
@@ -938,13 +953,38 @@ async function handle(req, env, ctx) {
   // ---------------- dashboard ----------------
   if (path === '/api/benefits/status' && method === 'GET') {
     const today = appToday(env);
-    const deps = {
-      getTxnsBetween: (accountId, start, end) => db.txnsForAccountBetween(env.DB, accountId, start, end),
-      getOverride: (cardId, benefitId, periodKey) => db.getOverride(env.DB, cardId, benefitId, periodKey),
-    };
     const cards = [];
     for (const card of await db.listCards(env.DB)) {
-      cards.push(await statusForCard(card, products, deps, today));
+      const transactionRange = statusDateRangeForCard(card, products, today);
+      const [overrides, transactions] = await Promise.all([
+        db.listOverridesByCard(env.DB, card.id),
+        card.account_id && transactionRange
+          ? db.txnsForAccountBetween(
+            env.DB,
+            card.account_id,
+            transactionRange.start,
+            transactionRange.end
+          )
+          : [],
+      ]);
+      const overrideMap = new Map(overrides.map((override) => (
+        [`${override.benefit_id}\u0000${override.period_key}`, override]
+      )));
+      const deps = {
+        getTxnsBetween: (accountId, start, end) => (
+          accountId === card.account_id
+            ? transactions.filter((txn) => txn.date >= start && txn.date <= end)
+            : []
+        ),
+        getOverride: (cardId, benefitId, periodKey) => (
+          cardId === card.id
+            ? overrideMap.get(`${benefitId}\u0000${periodKey}`) || null
+            : null
+        ),
+      };
+      const status = await statusForCard(card, products, deps, today);
+      status.historyBenefits = await recentPeriodHistoryForCard(card, products, deps, today);
+      cards.push(status);
     }
 
     const alerts = [];

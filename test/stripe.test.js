@@ -12,6 +12,7 @@ import {
   reconcileRelinkedAccounts,
   relinkRequiresHistoryMigration,
   relinkedProviderData,
+  retrieveAccount,
   stripeStatus,
   validateCollectedSession,
   validateRelinkedSession,
@@ -129,6 +130,30 @@ test('Stripe Relink targets the existing authorization with the preview API', as
     assert.equal(body.get('relink_options[authorization]'), 'fcauth_amex');
     assert.equal(body.has('relink_options[account]'), false);
     assert.deepEqual(body.getAll('permissions[]'), ['transactions']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Stripe sync reads account status with the Relink preview API', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return Response.json({
+      id: 'fca_reactivated',
+      status: 'active',
+      transaction_refresh: { id: 'fctxnref_new', status: 'pending' },
+    });
+  };
+  try {
+    const account = await retrieveAccount({
+      ...testEnv,
+      STRIPE_RELINK_API_VERSION: '2026-09-01.preview',
+    }, 'fca_reactivated');
+    assert.equal(account.status, 'active');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].init.headers['Stripe-Version'], '2026-09-01.preview');
   } finally {
     globalThis.fetch = originalFetch;
   }

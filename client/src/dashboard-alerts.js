@@ -74,7 +74,7 @@ const periodTitle = (period) => ({
   annual: 'Annual',
 }[period] || 'Current window');
 
-export function buildCardProgressWindows(benefits) {
+export function buildCardProgressWindows(benefits, { historical = false } = {}) {
   const windows = new Map();
 
   for (const benefit of benefits) {
@@ -106,8 +106,14 @@ export function buildCardProgressWindows(benefits) {
       const progress = window.amount > 0
         ? Math.min(100, Math.round((used / window.amount) * 100))
         : 0;
-      const status = window.remaining <= 0 ? 'used' : window.daysLeft <= 7 ? 'expiring' : 'open';
+      const status = window.remaining <= 0
+        ? 'used'
+        : historical
+          ? 'closed'
+          : window.daysLeft <= 7 ? 'expiring' : 'open';
       return { ...window, used, progress, status };
     })
-    .sort((a, b) => a.daysLeft - b.daysLeft || a.periodTitle.localeCompare(b.periodTitle));
+    .sort((a, b) => historical
+      ? b.windowEnd.localeCompare(a.windowEnd) || a.periodTitle.localeCompare(b.periodTitle)
+      : a.daysLeft - b.daysLeft || a.periodTitle.localeCompare(b.periodTitle));
 }

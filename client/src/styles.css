@@ -77,6 +77,21 @@ header.top h1 { font-size: 22px; margin: 0; letter-spacing: -0.02em; }
 .card-usage-totals { display: flex; align-items: flex-end; gap: 18px; text-align: right; }
 .card-usage-total { display: flex; flex-direction: column; white-space: nowrap; }
 .card-usage-total.used strong { color: var(--green); }
+.card-annual-value {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px;
+  margin: 12px 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--border);
+}
+.card-annual-value-item {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 11px 13px; background: color-mix(in srgb, var(--accent) 4%, var(--panel-2));
+}
+.card-annual-value-item span { color: var(--muted); font-size: 11.5px; }
+.card-annual-value-item strong { white-space: nowrap; font-size: 15px; }
+.card-annual-value-note {
+  grid-column: 1 / -1; padding: 6px 13px; background: var(--panel-2);
+  color: var(--muted); font-size: 10.5px;
+}
 .benefit-details { margin-top: 12px; border-top: 1px solid var(--border); }
 .benefit-details-summary {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -211,9 +226,21 @@ button.btn:disabled { opacity: 0.5; cursor: default; }
 .card-progress-track > span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
 .card-progress-window.expiring .card-progress-track > span { background: var(--amber); }
 .card-progress-window.used .card-progress-track > span { background: var(--green); }
+.card-progress-window.closed .card-progress-track > span { background: color-mix(in srgb, var(--accent) 62%, var(--muted)); }
 .card-progress-foot { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10.5px; }
 .card-progress-window.expiring .card-progress-foot span:last-child { color: var(--amber); }
 .card-progress-window.used .card-progress-foot span:last-child { color: var(--green); }
+.card-progress-history { margin-top: 10px; border-top: 1px solid var(--border); }
+.card-progress-history > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 2px 1px; cursor: pointer; list-style: none; font-size: 12px; font-weight: 650;
+}
+.card-progress-history > summary::-webkit-details-marker { display: none; }
+.card-progress-history > summary .benefit-details-chevron {
+  display: inline-block; margin-left: 7px; transition: transform 140ms ease;
+}
+.card-progress-history[open] > summary .benefit-details-chevron { transform: rotate(90deg); }
+.card-progress-windows.historical { margin-top: 9px; }
 .attribution-notice {
   margin: 10px 0 4px; padding: 9px 11px;
   border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--border)); border-radius: 9px;
@@ -309,6 +336,44 @@ select, .text-input {
 }
 .stripe-reconnect-banner strong { color: var(--amber); }
 .stripe-reconnect-banner .btn { flex: 0 0 auto; }
+.stripe-reconnect-actions { justify-content: flex-end; flex: 0 0 auto; }
+.stripe-flow-status {
+  display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px;
+  margin: 12px 0; padding: 12px 14px; border: 1px solid var(--accent); border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+.stripe-flow-status.warning { border-color: var(--amber); background: color-mix(in srgb, var(--amber) 8%, var(--panel)); }
+.stripe-flow-status.error { border-color: var(--red); background: color-mix(in srgb, var(--red) 7%, var(--panel)); }
+.stripe-flow-status.success { border-color: var(--green); background: color-mix(in srgb, var(--green) 7%, var(--panel)); }
+.stripe-flow-icon {
+  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 999px;
+  background: var(--accent); color: var(--bg); font-weight: 800;
+}
+.stripe-flow-status.working .stripe-flow-icon { animation: stripe-flow-spin 1.1s linear infinite; }
+.stripe-flow-status.warning .stripe-flow-icon { background: var(--amber); }
+.stripe-flow-status.error .stripe-flow-icon { background: var(--red); }
+.stripe-flow-status.success .stripe-flow-icon { background: var(--green); }
+.stripe-flow-copy > strong { display: block; margin: 2px 0 3px; }
+.stripe-flow-dismiss {
+  align-self: start; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 999px;
+  background: transparent; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1;
+}
+.stripe-flow-dismiss:hover { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
+.stripe-flow-steps {
+  display: flex; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none;
+}
+.stripe-flow-steps li {
+  display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10.5px;
+}
+.stripe-flow-steps li > span {
+  display: grid; place-items: center; width: 17px; height: 17px; border: 1px solid var(--border);
+  border-radius: 999px; font-size: 9px; font-weight: 750;
+}
+.stripe-flow-steps li.current { color: var(--text); font-weight: 650; }
+.stripe-flow-steps li.current > span { border-color: var(--accent); color: var(--accent); }
+.stripe-flow-steps li.done { color: var(--green); }
+.stripe-flow-steps li.done > span { border-color: var(--green); background: var(--green); color: var(--bg); }
+@keyframes stripe-flow-spin { to { transform: rotate(360deg); } }
 .sign-actions { margin-top: 8px; }
 .stripe-sign-setting {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
@@ -407,9 +472,13 @@ select, .text-input {
   .card-progress-windows { grid-template-columns: 1fr; }
   .card-progress-heading { align-items: center; }
   .card-usage-totals { gap: 12px; }
+  .card-annual-value { grid-template-columns: 1fr; }
+  .card-annual-value-note { grid-column: 1; }
   .sample-row { grid-template-columns: 76px minmax(0, 1fr) auto; gap: 6px; }
   .stripe-reconnect-banner { align-items: stretch; flex-direction: column; }
   .stripe-reconnect-banner .btn { width: 100%; }
+  .stripe-reconnect-actions { align-items: stretch; flex-direction: column-reverse; }
+  .stripe-flow-steps { align-items: flex-start; flex-direction: column; gap: 5px; }
   .institution-summary-side .reconnect-count-badge { display: none; }
   .csv-grid > select, .csv-grid > .file-input { width: 100%; max-width: none; }
   .pending-account { grid-template-columns: 1fr; }

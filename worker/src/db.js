@@ -309,6 +309,8 @@ export const getOverride = (DB, cardId, benefitId, periodKey) =>
   DB.prepare(
     'SELECT * FROM benefit_overrides WHERE card_id = ? AND benefit_id = ? AND period_key = ?'
   ).bind(cardId, benefitId, periodKey).first();
+export const listOverridesByCard = (DB, cardId) =>
+  all(DB.prepare('SELECT * FROM benefit_overrides WHERE card_id = ?').bind(cardId));
 export const upsertOverride = (DB, cardId, benefitId, periodKey, usedAmount, claimed, note, updatedAt) =>
   DB.prepare(
     `INSERT INTO benefit_overrides (card_id, benefit_id, period_key, used_amount, claimed, note, updated_at)

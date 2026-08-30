@@ -53,6 +53,40 @@ function ExpiryCardGroup({ card, initiallyOpen }) {
   );
 }
 
+function CreditProgressWindow({ window, historical = false }) {
+  return (
+    <div className={`card-progress-window ${window.status}`}>
+      <div className="card-progress-window-head">
+        <span>
+          <strong>{window.periodTitle}</strong>
+          <small>{window.periodLabel}</small>
+        </span>
+        <span className="card-progress-amount">
+          {money(window.used)} <small>of {money(window.amount)}</small>
+        </span>
+      </div>
+      <div
+        className="card-progress-track"
+        role="progressbar"
+        aria-label={`${window.periodTitle} ${window.periodLabel} credit usage from ${window.windowStart} to ${window.windowEnd}`}
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow={window.progress}
+      >
+        <span style={{ width: `${window.progress}%` }} />
+      </div>
+      <div className="card-progress-foot">
+        <span>{window.progress}% used</span>
+        <span>
+          {historical
+            ? (window.remaining <= 0 ? 'Fully used' : `${money(window.remaining)} unused`)
+            : `${money(window.remaining)} left · ${compactExpiryLabel(window.daysLeft)}`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard({ status, onChange }) {
   if (!status) return <div className="empty">Loading…</div>;
 
@@ -99,7 +133,13 @@ export default function Dashboard({ status, onChange }) {
 
       {cards.map((card) => {
         const progressWindows = buildCardProgressWindows(card.benefits);
+        const historyWindows = buildCardProgressWindows(
+          card.historyBenefits || [],
+          { historical: true }
+        );
         const totalUsed = progressWindows.reduce((total, window) => total + window.used, 0);
+        const historicalMonths = historyWindows.filter((window) => window.period === 'monthly').length;
+        const historicalQuarters = historyWindows.filter((window) => window.period === 'quarterly').length;
 
         return (
         <section className="card-section" key={card.cardId}>
@@ -114,18 +154,38 @@ export default function Dashboard({ status, onChange }) {
             <div
               className="card-usage-totals"
               role="group"
-              aria-label={`${money(card.totalRemaining)} unused, ${money(totalUsed)} used`}
+              aria-label={`${money(card.totalRemaining)} unused in current periods, ${money(totalUsed)} used in current periods`}
             >
               <div className="card-usage-total">
                 <strong>{money(card.totalRemaining)}</strong>
-                <div className="meta">unused</div>
+                <div className="meta">current unused</div>
               </div>
               <div className="card-usage-total used">
                 <strong>{money(totalUsed)}</strong>
-                <div className="meta">used</div>
+                <div className="meta">current used</div>
               </div>
             </div>
           </div>
+
+          {card.annualFee != null && (
+            <div
+              className="card-annual-value"
+              role="group"
+              aria-label={`Annual value summary for ${card.displayName}`}
+            >
+              <div className="card-annual-value-item">
+                <span>Annual fee</span>
+                <strong>{money(card.annualFee)}</strong>
+              </div>
+              <div className="card-annual-value-item">
+                <span>Tracked {today.slice(0, 4)} credits</span>
+                <strong>{money(card.annualCreditValue)}</strong>
+              </div>
+              <div className="card-annual-value-note">
+                Standard U.S. fee · tracked credits only; points, free nights, lounge access, and other perks are excluded
+              </div>
+            </div>
+          )}
 
           {card.benefits.length > 0 && (
             <div className="card-progress" role="group" aria-label={`Credit progress for ${card.displayName}`}>
@@ -135,35 +195,32 @@ export default function Dashboard({ status, onChange }) {
               </div>
               <div className="card-progress-windows">
                 {progressWindows.map((window) => (
-                  <div className={`card-progress-window ${window.status}`} key={window.key}>
-                    <div className="card-progress-window-head">
-                      <span>
-                        <strong>{window.periodTitle}</strong>
-                        <small>{window.periodLabel}</small>
-                      </span>
-                      <span className="card-progress-amount">
-                        {money(window.used)} <small>of {money(window.amount)}</small>
-                      </span>
-                    </div>
-                    <div
-                      className="card-progress-track"
-                      role="progressbar"
-                      aria-label={`${window.periodTitle} ${window.periodLabel} credit usage from ${window.windowStart} to ${window.windowEnd}`}
-                      aria-valuemin="0"
-                      aria-valuemax="100"
-                      aria-valuenow={window.progress}
-                    >
-                      <span style={{ width: `${window.progress}%` }} />
-                    </div>
-                    <div className="card-progress-foot">
-                      <span>{window.progress}% used</span>
-                      <span>
-                        {money(window.remaining)} left · {compactExpiryLabel(window.daysLeft)}
-                      </span>
-                    </div>
-                  </div>
+                  <CreditProgressWindow window={window} key={window.key} />
                 ))}
               </div>
+              {historyWindows.length > 0 && (
+                <details className="card-progress-history">
+                  <summary>
+                    <span>Earlier in {today.slice(0, 4)}</span>
+                    <span className="muted small">
+                      {[
+                        historicalMonths > 0
+                          ? `${historicalMonths} prior month${historicalMonths === 1 ? '' : 's'}`
+                          : null,
+                        historicalQuarters > 0
+                          ? `${historicalQuarters} completed quarter${historicalQuarters === 1 ? '' : 's'}`
+                          : null,
+                      ].filter(Boolean).join(' · ')}
+                      <span className="benefit-details-chevron" aria-hidden="true">›</span>
+                    </span>
+                  </summary>
+                  <div className="card-progress-windows historical">
+                    {historyWindows.map((window) => (
+                      <CreditProgressWindow historical window={window} key={`history:${window.key}`} />
+                    ))}
+                  </div>
+                </details>
+              )}
             </div>
           )}
 

@@ -482,8 +482,13 @@ async function listTransactions(env, externalAccountId, afterRefresh = null, max
   throw new Error('Stripe transaction pagination exceeded 100 pages');
 }
 
-const retrieveAccount = (env, externalAccountId) =>
-  stripeRequest(env, `/financial_connections/accounts/${encodeURIComponent(externalAccountId)}`);
+// Account status and relink fields are versioned with the public-preview Relink
+// API. Keep transaction list/refresh calls on the stable API, but never let a
+// stable response overwrite a freshly reactivated preview account as inactive.
+export const retrieveAccount = (env, externalAccountId) =>
+  stripeRequest(env, `/financial_connections/accounts/${encodeURIComponent(externalAccountId)}`, {
+    apiVersion: stripeStatus(env).relinkApiVersion,
+  });
 
 export const subscribeToTransactions = (env, externalAccountId) =>
   stripeRequest(env, `/financial_connections/accounts/${encodeURIComponent(externalAccountId)}/subscribe`, {
@@ -558,7 +563,7 @@ export async function syncItem(env, item, options = {}) {
   const chargeSign = effectiveChargeSign(providerData);
   const chargeSignDefaulted = !['positive', 'negative'].includes(providerData.chargeSign);
   const refreshCursors = { ...(providerData.transactionRefreshes || {}) };
-  const accountStatuses = { ...(providerData.accountStatuses || {}) };
+  const accountStatuses = {};
   let fetched = 0;
   let voided = 0;
   let completedRefreshes = 0;
@@ -623,6 +628,9 @@ export async function syncItem(env, item, options = {}) {
     failedRefreshes,
     refreshesStarted,
     signConfirmationRequired: false,
+    accountStatuses,
+    activeAccounts: Object.values(accountStatuses).filter((status) => status === 'active').length,
+    inactiveAccounts: Object.values(accountStatuses).filter((status) => status === 'inactive').length,
     subscription,
   };
 }

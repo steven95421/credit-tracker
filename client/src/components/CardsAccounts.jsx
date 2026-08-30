@@ -192,6 +192,68 @@ function StripeSignControl({ item, busy, onChange }) {
   );
 }
 
+const STRIPE_FLOW_STEPS = [
+  'Secure session',
+  'Bank authorization',
+  'Verify cards',
+];
+
+const stripeFlowStep = (phase) => ({
+  preparing: 0,
+  authorizing: 1,
+  verifying: 2,
+  refreshing: 2,
+  complete: 3,
+  pending: 2,
+}[phase] ?? 0);
+
+function stripeConnectionNotes(linked) {
+  const notes = [];
+  if (linked.ignoredAccounts > 0) notes.push(`${linked.ignoredAccounts} unsupported or inactive account(s) were ignored.`);
+  if (linked.refreshPending) notes.push('Stripe is preparing transaction history in the background.');
+  if (!linked.webhookConfigured) notes.push('Run Sync after it finishes because the Stripe webhook is not configured yet.');
+  if (linked.subscriptionErrors?.length) notes.push('At least one daily transaction subscription needs attention.');
+  if (linked.syncErrors?.length) notes.push('Sync needs to be retried for at least one card.');
+  if (linked.unmatchedAccounts?.length) notes.push(`${linked.unmatchedAccounts.length} returned card(s) could not be matched automatically.`);
+  return notes;
+}
+
+function StripeConnectionProgress({ flow, onDismiss }) {
+  if (!flow) return null;
+  const activeStep = stripeFlowStep(flow.phase);
+  const icon = flow.tone === 'success' ? '✓' : flow.tone === 'warning' ? '!' : flow.tone === 'error' ? '×' : '↻';
+  return (
+    <div className={`stripe-flow-status ${flow.tone || 'working'}`} role="status" aria-live="polite">
+      <span className="stripe-flow-icon" aria-hidden="true">{icon}</span>
+      <div className="stripe-flow-copy">
+        <strong>{flow.title}</strong>
+        <div className="muted small">{flow.detail}</div>
+        <ol className="stripe-flow-steps" aria-label="Stripe connection progress">
+          {STRIPE_FLOW_STEPS.map((step, index) => (
+            <li
+              className={index < activeStep ? 'done' : index === activeStep ? 'current' : ''}
+              key={step}
+            >
+              <span aria-hidden="true">{index < activeStep ? '✓' : index + 1}</span>
+              {step}
+            </li>
+          ))}
+        </ol>
+      </div>
+      {flow.tone !== 'working' && (
+        <button
+          aria-label="Dismiss Stripe connection status"
+          className="stripe-flow-dismiss"
+          onClick={onDismiss}
+          type="button"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function CardsAccounts({ config, onChange }) {
   const [items, setItems] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -200,6 +262,7 @@ export default function CardsAccounts({ config, onChange }) {
   const [err, setErr] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [stripeFlow, setStripeFlow] = useState(null);
   const [tellerSetup, setTellerSetup] = useState(null);
   const [samples, setSamples] = useState({});
   const [pendingProducts, setPendingProducts] = useState({});
@@ -319,9 +382,19 @@ export default function CardsAccounts({ config, onChange }) {
 
   const connectStripe = async (reconnectItem = null) => {
     const reconnecting = reconnectItem?.provider === 'stripe';
+    const institutionName = reconnectItem?.institutionName || 'Stripe';
     setBusy(true);
     setErr('');
     setMessage('');
+    setStripeFlow({
+      itemId: reconnectItem?.itemId || null,
+      institutionName,
+      action: reconnecting ? 'reconnect' : 'connect',
+      phase: 'preparing',
+      tone: 'working',
+      title: reconnecting ? `Preparing ${institutionName} reconnection` : 'Preparing Stripe connection',
+      detail: 'Creating a secure, one-time Financial Connections session.',
+    });
     try {
       const setupPath = reconnecting
         ? itemPath(reconnectItem.itemId, '/stripe-relink/session')
@@ -332,6 +405,12 @@ export default function CardsAccounts({ config, onChange }) {
       const setup = await api.post(setupPath);
       const stripeClient = await loadStripe(setup.publishableKey);
       if (!stripeClient) throw new Error('Unable to load Stripe.js');
+      setStripeFlow((current) => ({
+        ...current,
+        phase: 'authorizing',
+        title: reconnecting ? `Authorize ${institutionName} in Stripe` : 'Choose and authorize your bank',
+        detail: 'Complete the bank sign-in window. This page will continue automatically when it closes.',
+      }));
       const result = await stripeClient.collectFinancialConnectionsAccounts({
         clientSecret: setup.clientSecret,
       });
@@ -339,10 +418,45 @@ export default function CardsAccounts({ config, onChange }) {
       if (!result.financialConnectionsSession) {
         throw new Error('Stripe did not return a completed Financial Connections session');
       }
+      setStripeFlow((current) => ({
+        ...current,
+        phase: 'verifying',
+        title: 'Bank authorization received',
+        detail: 'Matching returned cards and verifying that Stripe reports them active.',
+      }));
       const linked = await api.post(completePath, {
         nonce: setup.nonce,
         sessionId: setup.sessionId,
       });
+      setStripeFlow((current) => ({
+        ...current,
+        phase: 'refreshing',
+        title: 'Updating linked cards',
+        detail: 'Refreshing the institution list and preserving existing card settings.',
+      }));
+      await afterMutation();
+
+      const outcomeNotes = stripeConnectionNotes(linked);
+      if (reconnecting && !linked.reconnected) {
+        const waiting = Number(linked.inactiveAccounts || 0) + Number(linked.unverifiedAccounts || 0);
+        const authorizationDetail = linked.authorizationCompleted
+          ? 'Bank authorization finished'
+          : 'Stripe returned the reconnect result';
+        setStripeFlow((current) => ({
+          ...current,
+          phase: 'pending',
+          tone: 'warning',
+          title: `${linked.activeAccounts || 0} of ${linked.accounts || 0} cards are active`,
+          detail: [
+            waiting > 0
+              ? `${authorizationDetail}, but Stripe still reports ${waiting} card${waiting === 1 ? '' : 's'} inactive or unverified. The reconnect notice remains intentionally.`
+              : `${authorizationDetail}, but Stripe has not confirmed every card as active yet.`,
+            ...outcomeNotes,
+          ].join(' '),
+        }));
+        return;
+      }
+
       const notes = [reconnecting
         ? `Reconnected ${linked.accounts} ${linked.institutionName || 'Stripe'} credit-card account(s).`
         : `Linked ${linked.accounts} Stripe credit-card account(s).`];
@@ -352,26 +466,128 @@ export default function CardsAccounts({ config, onChange }) {
         notes.push('Card products are matched from account names automatically and remain editable under Tracked cards.');
         notes.push('Purchases default to a negative (−) amount; you can change this later per account.');
       }
-      if (linked.ignoredAccounts > 0) notes.push(`${linked.ignoredAccounts} unsupported or inactive account(s) were ignored.`);
-      if (linked.refreshPending) notes.push('Stripe is preparing transaction history in the background.');
-      if (!linked.webhookConfigured) notes.push('Run Sync after it finishes because the Stripe webhook is not configured yet.');
-      if (linked.subscriptionErrors?.length) notes.push('At least one daily transaction subscription needs attention.');
-      if (linked.syncErrors?.length) notes.push('The bank was reconnected, but Sync needs to be retried for at least one card.');
-      if (linked.unmatchedAccounts?.length) notes.push(`${linked.unmatchedAccounts.length} returned card(s) could not be matched automatically.`);
+      notes.push(...outcomeNotes);
       setMessage(notes.join(' '));
-      await afterMutation();
+      const linkedCount = Number(linked.accounts || 0);
+      setStripeFlow((current) => ({
+        ...current,
+        phase: 'complete',
+        tone: 'success',
+        title: reconnecting
+          ? `${linkedCount} card${linkedCount === 1 ? '' : 's'} reconnected`
+          : `${linkedCount} card${linkedCount === 1 ? '' : 's'} connected`,
+        detail: reconnecting
+          ? 'Stripe confirmed the cards active and the reconnect notice has been refreshed.'
+          : 'The linked cards are ready for product matching and transaction sync.',
+      }));
     } catch (error) {
       if (reconnecting && error.code === 'stripe.relink_not_needed') {
         try {
-          await api.post(itemPath(reconnectItem.itemId, '/sync'));
-          setMessage('This Stripe connection is active again. Transactions were checked and the existing card assignment was preserved.');
+          const checked = await api.post(itemPath(reconnectItem.itemId, '/sync'));
           await afterMutation();
+          if (Number(checked.activeAccounts || 0) === 1
+              && Number(checked.inactiveAccounts || 0) === 0) {
+            setMessage('This Stripe connection is active again. Transactions were checked and the existing card assignment was preserved.');
+            setStripeFlow((current) => ({
+              ...current,
+              phase: 'complete',
+              tone: 'success',
+              title: `${institutionName} is active`,
+              detail: 'Stripe no longer requires reconnection; transactions were checked instead.',
+            }));
+          } else {
+            setStripeFlow((current) => ({
+              ...current,
+              phase: 'pending',
+              tone: 'warning',
+              title: `${institutionName} still needs attention`,
+              detail: 'Stripe no longer offers relink for this connection, but it did not verify the card as active.',
+            }));
+          }
         } catch (syncError) {
           setErr(syncError.message);
+          setStripeFlow((current) => ({
+            ...current,
+            tone: 'error',
+            title: 'Status check failed',
+            detail: syncError.message,
+          }));
         }
       } else {
         setErr(error.message);
+        setStripeFlow((current) => ({
+          ...current,
+          tone: 'error',
+          title: reconnecting ? `${institutionName} was not reconnected` : 'Stripe connection did not finish',
+          detail: error.message,
+        }));
       }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const checkStripeGroup = async (group) => {
+    const reconnectItems = group.items.filter((item) => item.provider === 'stripe' && item.relinkRequired);
+    if (reconnectItems.length === 0) return;
+    setBusy(true);
+    setErr('');
+    setMessage('');
+    setStripeFlow({
+      itemId: reconnectItems[0].itemId,
+      institutionName: group.institutionName,
+      action: 'check',
+      phase: 'verifying',
+      tone: 'working',
+      title: `Checking ${group.institutionName}`,
+      detail: `Reading Stripe's current status for ${reconnectItems.length} card${reconnectItems.length === 1 ? '' : 's'}.`,
+    });
+    let active = 0;
+    let inactive = 0;
+    let failed = 0;
+    try {
+      for (const item of reconnectItems) {
+        try {
+          const result = await api.post(itemPath(item.itemId, '/sync'));
+          active += Number(result.activeAccounts || 0);
+          inactive += Number(result.inactiveAccounts || 0);
+        } catch {
+          failed += 1;
+        }
+      }
+      await afterMutation();
+      const unverified = Math.max(0, reconnectItems.length - failed - active - inactive);
+      if (active === reconnectItems.length && inactive === 0 && failed === 0) {
+        setMessage(`${group.institutionName} is active again. The reconnect notice was cleared.`);
+        setStripeFlow((current) => ({
+          ...current,
+          phase: 'complete',
+          tone: 'success',
+          title: `${active} card${active === 1 ? '' : 's'} active`,
+          detail: 'Stripe confirmed transaction access is available again.',
+        }));
+      } else {
+        setStripeFlow((current) => ({
+          ...current,
+          phase: 'pending',
+          tone: 'warning',
+          title: [
+            `${active} active`,
+            inactive ? `${inactive} still inactive` : null,
+            unverified ? `${unverified} unverified` : null,
+            failed ? `${failed} failed` : null,
+          ].filter(Boolean).join(' · '),
+          detail: 'The reconnect notice remains because Stripe has not confirmed every card as active.',
+        }));
+      }
+    } catch (error) {
+      setErr(error.message);
+      setStripeFlow((current) => ({
+        ...current,
+        tone: 'error',
+        title: `${group.institutionName} status check failed`,
+        detail: error.message,
+      }));
     } finally {
       setBusy(false);
     }
@@ -695,6 +911,7 @@ export default function CardsAccounts({ config, onChange }) {
             )}
           </div>
         </div>
+        <StripeConnectionProgress flow={stripeFlow} onDismiss={() => setStripeFlow(null)} />
         {!stripeConfig?.configured && (
           <div className="muted small">Stripe Financial Connections is not configured on the Worker.</div>
         )}
@@ -721,13 +938,28 @@ export default function CardsAccounts({ config, onChange }) {
                   If the cards were linked separately, repeat until this notice clears.
                 </div>
               </div>
-              <button
-                className="btn reconnect"
-                disabled={busy || !reconnectItem}
-                onClick={() => connectStripe(reconnectItem)}
-              >
-                Reconnect {group.institutionName}
-              </button>
+              <div className="row stripe-reconnect-actions">
+                <button
+                  className="btn"
+                  disabled={busy || !reconnectItem}
+                  onClick={() => checkStripeGroup(group)}
+                >
+                  {busy && stripeFlow?.action === 'check'
+                    ? 'Checking…'
+                    : 'Check status'}
+                </button>
+                <button
+                  className="btn reconnect"
+                  disabled={busy || !reconnectItem}
+                  onClick={() => connectStripe(reconnectItem)}
+                >
+                  {busy
+                    && stripeFlow?.action === 'reconnect'
+                    && stripeFlow?.itemId === reconnectItem?.itemId
+                    ? 'Reconnecting…'
+                    : `Reconnect ${group.institutionName}`}
+                </button>
+              </div>
             </div>
           );
         })}

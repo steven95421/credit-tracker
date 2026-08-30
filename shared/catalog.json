@@ -1,10 +1,11 @@
 {
-  "_comment": "Benefit catalog for Steven's actual cards (roster confirmed 2026-06-20; current consumer Platinum terms refreshed from issuer sources 2026-08-30). period: monthly | quarterly | semiannual | annual. amountByMonth overrides the default amount for exceptional months. match.merchants = case-insensitive substrings tested against transaction merchant_name/name; match.categories = Plaid personal_finance_category.primary (TRAVEL, FOOD_AND_DRINK, TRANSPORTATION, ENTERTAINMENT, GENERAL_MERCHANDISE). Empty match => statement-credit or manual tracking only. anchor (optional, for annual) = {\"month\":1-12,\"day\":1-31}: use it for cardmember-anniversary credits — set it to YOUR account's anniversary; without it, annual defaults to the calendar year.",
+  "_comment": "Benefit catalog for Steven's actual cards (roster confirmed 2026-06-20; fees and current consumer Platinum terms refreshed from issuer sources 2026-08-30). annualFee is the standard U.S. primary-card fee, not account-specific introductory or grandfathered pricing. period: monthly | quarterly | semiannual | annual. amountByMonth overrides the default amount for exceptional months. match.merchants = case-insensitive substrings tested against transaction merchant_name/name; match.categories = Plaid personal_finance_category.primary (TRAVEL, FOOD_AND_DRINK, TRANSPORTATION, ENTERTAINMENT, GENERAL_MERCHANDISE). Empty match => statement-credit or manual tracking only. anchor (optional, for annual) = {\"month\":1-12,\"day\":1-31}: use it for cardmember-anniversary credits — set it to YOUR account's anniversary; without it, annual defaults to the calendar year.",
   "products": [
     {
       "key": "amex_platinum",
       "name": "American Express Platinum",
       "issuer": "American Express",
+      "annualFee": 895,
       "benefits": [
         {
           "id": "amex_plat_uber",
@@ -104,6 +105,7 @@
       "key": "hilton_aspire",
       "name": "Hilton Honors Aspire",
       "issuer": "American Express",
+      "annualFee": 550,
       "benefits": [
         {
           "id": "hilton_aspire_resort",
@@ -127,6 +129,7 @@
       "key": "amex_bonvoy_brilliant",
       "name": "Marriott Bonvoy Brilliant",
       "issuer": "American Express",
+      "annualFee": 650,
       "benefits": [
         {
           "id": "bonvoy_brilliant_dining",
@@ -142,6 +145,7 @@
       "key": "citi_strata_premier",
       "name": "Citi Strata Premier",
       "issuer": "Citi",
+      "annualFee": 95,
       "benefits": [
         {
           "id": "citi_premier_hotel",
@@ -157,6 +161,7 @@
       "key": "citi_strata_elite",
       "name": "Citi Strata Elite",
       "issuer": "Citi",
+      "annualFee": 595,
       "benefits": [
         {
           "id": "citi_elite_hotel",

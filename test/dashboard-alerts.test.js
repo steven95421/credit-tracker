@@ -85,6 +85,17 @@ test('a manually claimed credit counts as fully used even without a used amount'
   assert.equal(window.status, 'used');
 });
 
+test('historical progress is newest first and does not mark missed credit as expiring', () => {
+  const windows = buildCardProgressWindows([
+    { period: 'monthly', periodLabel: 'May 2026', windowStart: '2026-05-01', windowEnd: '2026-05-31', amount: 20, remaining: 5, daysLeft: 0 },
+    { period: 'monthly', periodLabel: 'Jul 2026', windowStart: '2026-07-01', windowEnd: '2026-07-31', amount: 20, remaining: 20, daysLeft: 0 },
+  ], { historical: true });
+
+  assert.deepEqual(windows.map((window) => window.periodLabel), ['Jul 2026', 'May 2026']);
+  assert.equal(windows[0].status, 'closed');
+  assert.equal(windows[1].status, 'closed');
+});
+
 test('compact expiry labels make urgent deadlines scannable', () => {
   assert.equal(compactExpiryLabel(0), 'Today');
   assert.equal(compactExpiryLabel(1), '1 day');

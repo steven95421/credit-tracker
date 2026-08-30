@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { attributeTransactions, matchesBenefit, periodWindow, statusForCard } from '../shared/benefits-core.js';
+import {
+  annualCreditValueForProduct,
+  attributeTransactions,
+  matchesBenefit,
+  periodWindow,
+  recentCompletedPeriodWindows,
+  recentPeriodHistoryForCard,
+  statusDateRangeForCard,
+  statusForCard,
+} from '../shared/benefits-core.js';
 
 const windowFor = (benefit, today = '2026-08-30') => ({
   benefit,
@@ -216,4 +225,97 @@ test('monthly amount overrides apply only in their configured month', async () =
   assert.equal(november.benefits[0].remaining, 15);
   assert.equal(december.benefits[0].amount, 35);
   assert.equal(december.benefits[0].remaining, 35);
+});
+
+test('annual card value annualizes each reset window alongside the fee', async () => {
+  const product = {
+    key: 'annual_value_card',
+    name: 'Annual Value Card',
+    issuer: 'Test',
+    annualFee: 895,
+    benefits: [
+      { id: 'monthly', name: 'Monthly', amount: 15, amountByMonth: { 12: 35 }, period: 'monthly' },
+      { id: 'quarterly', name: 'Quarterly', amount: 100, period: 'quarterly' },
+      { id: 'semiannual', name: 'Half-year', amount: 300, period: 'semiannual' },
+      { id: 'annual', name: 'Annual', amount: 200, period: 'annual' },
+    ],
+  };
+
+  assert.equal(annualCreditValueForProduct(product, 2026), 1400);
+  const status = await statusForCard(
+    { id: 8, account_id: null, product_key: product.key },
+    [product],
+    { getTxnsBetween: async () => [], getOverride: async () => null },
+    '2026-08-30'
+  );
+  assert.equal(status.annualFee, 895);
+  assert.equal(status.annualCreditValue, 1400);
+});
+
+test('recent period history stays in the current year and keeps only completed windows', async () => {
+  assert.deepEqual(
+    recentCompletedPeriodWindows('monthly', '2026-08-30').map((window) => window.key),
+    ['2026-07', '2026-06', '2026-05']
+  );
+  assert.deepEqual(
+    recentCompletedPeriodWindows('quarterly', '2026-08-30').map((window) => window.key),
+    ['2026-Q2', '2026-Q1']
+  );
+  assert.deepEqual(recentCompletedPeriodWindows('quarterly', '2026-02-01'), []);
+  assert.deepEqual(recentCompletedPeriodWindows('monthly', '2026-08-30', 0), []);
+
+  const product = {
+    key: 'history_card', name: 'History Card', issuer: 'Test', benefits: [
+      {
+        id: 'monthly', name: 'Monthly Credit', amount: 10, period: 'monthly',
+        match: { merchants: ['monthly shop'], categories: [] },
+      },
+      {
+        id: 'quarterly', name: 'Quarterly Credit', amount: 25, period: 'quarterly',
+        match: { merchants: ['quarterly shop'], categories: [] },
+      },
+    ],
+  };
+  const history = await recentPeriodHistoryForCard(
+    { id: 7, account_id: 'account_history', product_key: 'history_card' },
+    [product],
+    {
+      getTxnsBetween: async () => [
+        { transaction_id: 'may', date: '2026-05-10', name: 'MONTHLY SHOP', amount: 6 },
+        { transaction_id: 'q2', date: '2026-04-10', name: 'QUARTERLY SHOP', amount: 20 },
+      ],
+      getOverride: async () => null,
+    },
+    '2026-08-30'
+  );
+
+  assert.deepEqual(history.map((benefit) => benefit.periodKey), [
+    '2026-07', '2026-06', '2026-05', '2026-Q2', '2026-Q1',
+  ]);
+  assert.equal(history.find((benefit) => benefit.periodKey === '2026-05').used, 6);
+  assert.equal(history.find((benefit) => benefit.periodKey === '2026-Q2').used, 20);
+});
+
+test('dashboard history can be served by one bounded transaction read per card', () => {
+  const product = {
+    key: 'bounded_history',
+    benefits: [
+      { id: 'monthly', amount: 10, period: 'monthly' },
+      { id: 'quarterly', amount: 25, period: 'quarterly' },
+      { id: 'anchored', amount: 100, period: 'annual', anchor: { month: 9, day: 1 } },
+    ],
+  };
+
+  assert.deepEqual(
+    statusDateRangeForCard(
+      { product_key: 'bounded_history' },
+      [product],
+      '2026-10-15'
+    ),
+    { start: '2025-09-01', end: '2027-08-31' }
+  );
+  assert.equal(
+    statusDateRangeForCard({ product_key: 'missing' }, [product], '2026-10-15'),
+    null
+  );
 });

@@ -167,6 +167,13 @@ export default function Dashboard({ status, onChange }) {
             </div>
           )}
 
+          {card.attributionAmbiguousCount > 0 && (
+            <div className="attribution-notice" role="status">
+              <strong>{card.attributionAmbiguousCount} transaction{card.attributionAmbiguousCount === 1 ? '' : 's'} need review.</strong>{' '}
+              They matched multiple credits equally, so nothing was assigned automatically. Open Credit details to set the used amount manually.
+            </div>
+          )}
+
           {card.benefits.length === 0 ? (
             <div className="muted" style={{ fontSize: 13, paddingTop: 8 }}>
               No benefits defined for this product. Edit{' '}

@@ -55,7 +55,11 @@ export default function BenefitRow({ cardId, b, onChange }) {
       <div className="benefit-actions">
         {b.hasAutoRules && (
           <span className="muted" style={{ fontSize: 12 }}>
-            auto-matched {money(b.autoUsed)} · {b.matchedCount} txn{b.matchedCount === 1 ? '' : 's'}
+            auto-attributed {money(b.autoUsed)}
+            {b.purchaseMatchedCount > 0 && ` · ${b.purchaseMatchedCount} purchase${b.purchaseMatchedCount === 1 ? '' : 's'}`}
+            {b.creditMatchedCount > 0 && ` · ${b.creditMatchedCount} credit${b.creditMatchedCount === 1 ? '' : 's'}`}
+            {b.reversalMatchedCount > 0 && ` · ${b.reversalMatchedCount} reversal${b.reversalMatchedCount === 1 ? '' : 's'}`}
+            {b.matchedCount === 0 && ' · no matches yet'}
           </span>
         )}
         {!b.hasAutoRules && <span className="muted" style={{ fontSize: 12 }}>manual tracking</span>}

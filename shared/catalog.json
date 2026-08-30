@@ -1,5 +1,5 @@
 {
-  "_comment": "Benefit catalog for Steven's ACTUAL cards (roster confirmed 2026-06-20; amounts cross-checked against the 美卡報銷 Google Sheet, verified 2026-06-20). 2025-refresh Amex Platinum ($895) has 10 statement credits — ALL require enrollment in the Amex app. period: monthly | quarterly | semiannual | annual. match.merchants = case-insensitive substrings tested against transaction merchant_name/name; match.categories = Plaid personal_finance_category.primary (TRAVEL, FOOD_AND_DRINK, TRANSPORTATION, ENTERTAINMENT, GENERAL_MERCHANDISE). Empty match => manual-only (track by hand). anchor (optional, for annual) = {\"month\":1-12,\"day\":1-31}: use it for cardmember-anniversary credits — set it to YOUR account's anniversary; without it, annual defaults to the calendar year.",
+  "_comment": "Benefit catalog for Steven's actual cards (roster confirmed 2026-06-20; current consumer Platinum terms refreshed from issuer sources 2026-08-30). period: monthly | quarterly | semiannual | annual. amountByMonth overrides the default amount for exceptional months. match.merchants = case-insensitive substrings tested against transaction merchant_name/name; match.categories = Plaid personal_finance_category.primary (TRAVEL, FOOD_AND_DRINK, TRANSPORTATION, ENTERTAINMENT, GENERAL_MERCHANDISE). Empty match => statement-credit or manual tracking only. anchor (optional, for annual) = {\"month\":1-12,\"day\":1-31}: use it for cardmember-anniversary credits — set it to YOUR account's anniversary; without it, annual defaults to the calendar year.",
   "products": [
     {
       "key": "amex_platinum",
@@ -10,17 +10,19 @@
           "id": "amex_plat_uber",
           "name": "Uber Cash",
           "amount": 15,
+          "amountByMonth": { "12": 35 },
           "period": "monthly",
+          "tracking": "wallet",
           "notes": "$15/mo is issued directly to your Uber Cash balance in the Uber app—not as a card statement credit (+$20 bonus in December = $35). Add the card to your Uber wallet; covers Uber rides & Uber Eats. Enrollment required.",
-          "match": { "merchants": ["uber"], "categories": [] }
+          "match": { "merchants": [], "categories": [] }
         },
         {
           "id": "amex_plat_digital_ent",
           "name": "Digital Entertainment Credit",
           "amount": 25,
           "period": "monthly",
-          "notes": "Up to $25/mo on eligible: YouTube Premium/TV, Disney+, Hulu, ESPN+, Peacock, NYT, WSJ. Enrollment required.",
-          "match": { "merchants": ["youtube", "disney", "hulu", "espn", "peacock", "nytimes", "new york times", "wall street journal", "wsj", "audible", "siriusxm"], "categories": [] }
+          "notes": "Up to $25/mo on eligible: YouTube Premium/TV, Disney+, Hulu, ESPN streaming, Paramount+, Peacock, NYT, and WSJ. Enrollment required.",
+          "match": { "merchants": ["youtube", "disney", "hulu", "espn", "paramount", "peacock", "nytimes", "new york times", "wall street journal", "wsj"], "categories": [] }
         },
         {
           "id": "amex_plat_walmart_plus",
@@ -51,7 +53,8 @@
           "name": "FHR Hotel Credit",
           "amount": 300,
           "period": "semiannual",
-          "notes": "Up to $300 (Jan–Jun) and $300 (Jul–Dec) on Fine Hotels + Resorts / The Hotel Collection prepaid bookings via Amex Travel. H1 deadline 6/30 — easy to miss. Enrollment required. Posts via Amex Travel, so verify manually.",
+          "notes": "Up to $300 (Jan–Jun) and $300 (Jul–Dec) on prepaid Fine Hotels + Resorts / The Hotel Collection bookings via Amex Travel. THC requires at least 2 nights; the booking date determines the half-year window. Posts via Amex Travel, so verify manually.",
+          "creditMatch": { "descriptions": ["fine hotels", "fine hotel", "fhr", "hotel collection", "amex travel hotel"] },
           "match": { "merchants": [], "categories": [] }
         },
         {
@@ -60,6 +63,7 @@
           "amount": 200,
           "period": "annual",
           "notes": "Up to $200/yr in incidental fees (bags, seats) with ONE selected airline. Calendar year. Enrollment required. Airfare, hotels, and rideshare share broad travel categories, so verify this credit manually.",
+          "creditMatch": { "descriptions": ["airline fee", "airline incidental"] },
           "match": { "merchants": [], "categories": [] }
         },
         {
@@ -73,10 +77,18 @@
         {
           "id": "amex_plat_clear",
           "name": "CLEAR+ Credit",
-          "amount": 209,
+          "amount": 219,
           "period": "annual",
-          "notes": "Up to $209/yr covering a CLEAR+ membership. Calendar year. Enrollment required.",
+          "notes": "Up to $219/yr covering a CLEAR+ membership. Calendar year. Enrollment required.",
           "match": { "merchants": ["clear secure", "clearme"], "categories": [] }
+        },
+        {
+          "id": "amex_plat_equinox",
+          "name": "Equinox Credit",
+          "amount": 300,
+          "period": "annual",
+          "notes": "Up to $300/calendar year on an eligible U.S. Equinox club membership or Equinox+ digital subscription. Enrollment required.",
+          "match": { "merchants": ["equinox", "equinox+"], "categories": [] }
         },
         {
           "id": "amex_plat_oura",

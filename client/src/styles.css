@@ -210,6 +210,12 @@ button.btn:disabled { opacity: 0.5; cursor: default; }
 .card-progress-foot { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10.5px; }
 .card-progress-window.expiring .card-progress-foot span:last-child { color: var(--amber); }
 .card-progress-window.used .card-progress-foot span:last-child { color: var(--green); }
+.attribution-notice {
+  margin: 10px 0 4px; padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--border)); border-radius: 9px;
+  background: color-mix(in srgb, var(--amber) 7%, var(--panel)); color: var(--muted); font-size: 12px;
+}
+.attribution-notice strong { color: var(--amber); }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .between { justify-content: space-between; }
 .muted { color: var(--muted); }

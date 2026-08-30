@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   defaultTrackedCardName,
+  groupLinkedInstitutions,
   partitionPendingAccounts,
   partitionProductsForInstitution,
   pruneDeferredSetupIds,
@@ -37,6 +38,81 @@ test('card products are suggested only when the institution issuer is unambiguou
   const missing = partitionProductsForInstitution(products, '');
   assert.deepEqual(missing.suggested, []);
   assert.deepEqual(missing.other, products);
+});
+
+test('linked connections are grouped into one row per canonical institution', () => {
+  const items = [
+    {
+      itemId: 'stripe:citi-1',
+      institutionName: 'Citi',
+      provider: 'stripe',
+      lastSyncedAt: '2026-08-29T22:00:23.000Z',
+      accounts: [{ account_id: 'citi-1' }],
+    },
+    {
+      itemId: 'stripe:citi-2',
+      institutionName: 'Citibank, N.A.',
+      provider: 'stripe',
+      lastSyncedAt: '2026-08-29T22:00:32.000Z',
+      accounts: [{ account_id: 'citi-2' }],
+    },
+    {
+      itemId: 'plaid:citi-3',
+      institutionName: 'CITI',
+      provider: 'plaid',
+      lastSyncedAt: '2026-08-29T22:00:43.000Z',
+      accounts: [{ account_id: 'citi-3' }],
+    },
+    {
+      itemId: 'stripe:amex-1',
+      institutionName: 'American Express National Bank',
+      provider: 'stripe',
+      lastSyncedAt: null,
+      accountWarning: 'Reconnect this account.',
+      accounts: [{ account_id: 'amex-1' }],
+    },
+    {
+      itemId: 'stripe:unknown-1',
+      institutionName: '',
+      provider: 'stripe',
+      accounts: [{ account_id: 'unknown-1' }],
+    },
+    {
+      itemId: 'stripe:unknown-2',
+      institutionName: '',
+      provider: 'stripe',
+      accounts: [{ account_id: 'unknown-2' }],
+    },
+  ];
+
+  const groups = groupLinkedInstitutions(items);
+  assert.deepEqual(groups.map((group) => group.institutionName), [
+    'American Express',
+    'Citi',
+    'Institution',
+    'Institution',
+  ]);
+  const citi = groups.find((group) => group.institutionName === 'Citi');
+  const amex = groups.find((group) => group.institutionName === 'American Express');
+  assert.equal(citi.items.length, 3);
+  assert.equal(citi.accounts.length, 3);
+  assert.deepEqual(citi.providers, ['stripe', 'plaid']);
+  assert.equal(citi.oldestSyncedAt, '2026-08-29T22:00:23.000Z');
+  assert.equal(citi.latestSyncedAt, '2026-08-29T22:00:43.000Z');
+  assert.equal(citi.neverSyncedCount, 0);
+  assert.equal(amex.needsAttention, true);
+  assert.equal(amex.neverSyncedCount, 1);
+  assert.notEqual(groups[2].key, groups[3].key);
+});
+
+test('provider fallback institution labels stay as separate connection rows', () => {
+  const groups = groupLinkedInstitutions([
+    { itemId: 'stripe:1', institutionName: 'Stripe credit card', provider: 'stripe', accounts: [] },
+    { itemId: 'stripe:2', institutionName: 'Stripe credit card', provider: 'stripe', accounts: [] },
+  ]);
+
+  assert.equal(groups.length, 2);
+  assert.notEqual(groups[0].key, groups[1].key);
 });
 
 test('only connected credit accounts without a tracked card need confirmation', () => {

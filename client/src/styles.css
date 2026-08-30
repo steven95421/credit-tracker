@@ -116,7 +116,7 @@ select, .text-input {
 }
 .acct { border-top: 1px solid var(--border); padding: 8px 0; }
 .institution-accordion { padding: 0; }
-.institution-accordion:first-of-type { border-top: none; }
+.card-section > .institution-accordion:first-of-type { border-top: none; }
 .institution-summary {
   display: flex;
   justify-content: space-between;
@@ -164,6 +164,16 @@ select, .text-input {
   padding: 2px 0 0 14px;
   border-left: 2px solid var(--border);
 }
+.institution-connection { padding: 8px 0 12px; }
+.institution-connection + .institution-connection {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 14px;
+}
+.institution-connection:last-child { padding-bottom: 0; }
+.institution-connection-copy { min-width: 0; }
+.institution-connection-meta { gap: 7px; margin-bottom: 4px; }
+.institution-connection-actions { justify-content: flex-end; }
 .institution-account-list { min-width: 0; }
 .err { color: var(--red); font-size: 13px; margin: 6px 0; }
 .success { color: var(--green); font-size: 13px; margin: 6px 0; }

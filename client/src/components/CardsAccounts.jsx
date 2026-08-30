@@ -5,6 +5,7 @@ import { useTellerConnect } from 'teller-connect-react';
 import { api } from '../api.js';
 import {
   defaultTrackedCardName,
+  groupLinkedInstitutions,
   partitionPendingAccounts,
   partitionProductsForInstitution,
   pruneDeferredSetupIds,
@@ -15,6 +16,19 @@ import { parseCsvFile } from '../csv.js';
 
 const itemPath = (itemId, suffix = '') => `/api/items/${encodeURIComponent(itemId)}${suffix}`;
 const DEFERRED_SETUP_STORAGE_KEY = 'ct_deferred_card_setups';
+
+const formatLastSyncedAt = (value) => {
+  const timestamp = Date.parse(value || '');
+  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : 'never';
+};
+
+const institutionSyncSummary = (group) => {
+  if (group.neverSyncedCount === group.items.length) return 'last synced: never';
+  if (group.neverSyncedCount > 0) {
+    return `${group.neverSyncedCount} connection${group.neverSyncedCount === 1 ? '' : 's'} never synced`;
+  }
+  return `oldest sync: ${formatLastSyncedAt(group.oldestSyncedAt)}`;
+};
 
 function loadDeferredSetupIds() {
   try {
@@ -528,6 +542,7 @@ export default function CardsAccounts({ config, onChange }) {
   };
 
   const itemsById = new Map(items.map((item) => [item.itemId, item]));
+  const institutionGroups = groupLinkedInstitutions(items);
   const pendingAccounts = unmappedConnectedAccounts(accounts, cards);
   const { active: activePendingAccounts, deferred: deferredPendingAccounts } = partitionPendingAccounts(
     pendingAccounts,
@@ -597,14 +612,16 @@ export default function CardsAccounts({ config, onChange }) {
         {items.length === 0 && (
           <div className="muted small" style={{ paddingTop: 6 }}>No institutions or CSV accounts linked yet.</div>
         )}
-        {items.map((item) => (
-          <details className="acct institution-accordion" key={item.itemId}>
+        {institutionGroups.map((group) => (
+          <details className="acct institution-accordion" key={group.key}>
             <summary className="institution-summary">
               <span className="institution-summary-copy">
                 <span className="institution-summary-name">
-                  <strong>{item.institutionName || 'Institution'}</strong>
-                  <span className="badge provider-badge">{item.provider}</span>
-                  {(item.capabilityWarning || item.subscriptionWarning || item.accountWarning) && (
+                  <strong>{group.institutionName}</strong>
+                  {group.providers.map((provider) => (
+                    <span className="badge provider-badge" key={provider}>{provider}</span>
+                  ))}
+                  {group.needsAttention && (
                     <span
                       className="badge institution-attention-badge"
                       role="img"
@@ -616,60 +633,72 @@ export default function CardsAccounts({ config, onChange }) {
                   )}
                 </span>
                 <span className="muted small institution-last-synced">
-                  last synced: {item.lastSyncedAt ? new Date(item.lastSyncedAt).toLocaleString() : 'never'}
-                  {item.refreshPending ? ' · Stripe refresh pending' : ''}
+                  {institutionSyncSummary(group)}
+                  {group.refreshPending ? ' · Stripe refresh pending' : ''}
                 </span>
               </span>
               <span className="institution-summary-side">
                 <span className="muted small">
-                  {item.accounts.length} account{item.accounts.length === 1 ? '' : 's'}
+                  {group.accounts.length} account{group.accounts.length === 1 ? '' : 's'}
                 </span>
                 <span className="institution-chevron" aria-hidden="true">›</span>
               </span>
             </summary>
             <div className="institution-details">
-              <div className="row between">
-                <div className="muted small institution-account-list">
-                  {item.accounts.map((account) => (
-                    `${account.name}${account.mask ? ' ••' + account.mask : ''}`
-                  )).join(' · ')}
-                </div>
-                <div className="row">
-                  {item.provider === 'teller' && (
-                    <button className="btn" disabled={busy || Boolean(tellerSetup)} onClick={() => startTeller(item.itemId)}>
-                      Repair
-                    </button>
-                  )}
-                  {item.provider !== 'csv' && (
-                    <button
-                      className="btn"
-                      disabled={busy || !item.transactionsSupported || (
-                        item.signConfirmationRequired && item.provider !== 'stripe'
+              {group.items.map((item) => (
+                <div className="institution-connection" key={item.itemId}>
+                  <div className="row between">
+                    <div className="institution-connection-copy">
+                      <div className="row institution-connection-meta">
+                        <span className="badge provider-badge">{item.provider}</span>
+                        <span className="muted small">
+                          last synced: {formatLastSyncedAt(item.lastSyncedAt)}
+                        </span>
+                      </div>
+                      <div className="muted small institution-account-list">
+                        {item.accounts.map((account) => (
+                          `${account.name}${account.mask ? ' ••' + account.mask : ''}`
+                        )).join(' · ')}
+                      </div>
+                    </div>
+                    <div className="row institution-connection-actions">
+                      {item.provider === 'teller' && (
+                        <button className="btn" disabled={busy || Boolean(tellerSetup)} onClick={() => startTeller(item.itemId)}>
+                          Repair
+                        </button>
                       )}
-                      onClick={() => syncItem(item.itemId)}
-                    >
-                      {item.provider === 'stripe' && item.refreshPending ? '↻ Check refresh' : '↻ Sync'}
-                    </button>
+                      {item.provider !== 'csv' && (
+                        <button
+                          className="btn"
+                          disabled={busy || !item.transactionsSupported || (
+                            item.signConfirmationRequired && item.provider !== 'stripe'
+                          )}
+                          onClick={() => syncItem(item.itemId)}
+                        >
+                          {item.provider === 'stripe' && item.refreshPending ? '↻ Check refresh' : '↻ Sync'}
+                        </button>
+                      )}
+                      <button className="btn danger" disabled={busy} onClick={() => removeItem(item)}>Unlink</button>
+                    </div>
+                  </div>
+                  {item.capabilityWarning && <div className="warning-box">⚠ {item.capabilityWarning}</div>}
+                  {item.subscriptionWarning && <div className="warning-box">⚠ {item.subscriptionWarning}</div>}
+                  {item.accountWarning && <div className="warning-box">⚠ {item.accountWarning}</div>}
+                  {item.provider === 'stripe' && (
+                    <StripeSignControl item={item} busy={busy} onChange={changeStripeSign} />
                   )}
-                  <button className="btn danger" disabled={busy} onClick={() => removeItem(item)}>Unlink</button>
+                  {item.signConfirmationRequired && (
+                    <ProviderSignPanel
+                      item={item}
+                      sample={samples[item.itemId]}
+                      busy={busy}
+                      onLoad={loadSamples}
+                      onConfirm={confirmProviderSign}
+                      onAcknowledgeEmpty={acknowledgeEmptySample}
+                    />
+                  )}
                 </div>
-              </div>
-              {item.capabilityWarning && <div className="warning-box">⚠ {item.capabilityWarning}</div>}
-              {item.subscriptionWarning && <div className="warning-box">⚠ {item.subscriptionWarning}</div>}
-              {item.accountWarning && <div className="warning-box">⚠ {item.accountWarning}</div>}
-              {item.provider === 'stripe' && (
-                <StripeSignControl item={item} busy={busy} onChange={changeStripeSign} />
-              )}
-              {item.signConfirmationRequired && (
-                <ProviderSignPanel
-                  item={item}
-                  sample={samples[item.itemId]}
-                  busy={busy}
-                  onLoad={loadSamples}
-                  onConfirm={confirmProviderSign}
-                  onAcknowledgeEmpty={acknowledgeEmptySample}
-                />
-              )}
+              ))}
             </div>
           </details>
         ))}

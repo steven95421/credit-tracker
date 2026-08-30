@@ -144,6 +144,7 @@ test('linked connections are grouped into one row per canonical institution', ()
       provider: 'stripe',
       lastSyncedAt: null,
       accountWarning: 'Reconnect this account.',
+      relinkRequired: true,
       accounts: [{ account_id: 'amex-1' }],
     },
     {
@@ -176,6 +177,7 @@ test('linked connections are grouped into one row per canonical institution', ()
   assert.equal(citi.latestSyncedAt, '2026-08-29T22:00:43.000Z');
   assert.equal(citi.neverSyncedCount, 0);
   assert.equal(amex.needsAttention, true);
+  assert.equal(amex.reconnectRequiredCount, 1);
   assert.equal(amex.neverSyncedCount, 1);
   assert.notEqual(groups[2].key, groups[3].key);
 });

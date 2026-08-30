@@ -57,9 +57,11 @@ function itemView(item, accounts) {
   const hasExplicitChargeSign = ['positive', 'negative'].includes(data.chargeSign);
   const transactionsSupported = provider !== PROVIDERS.TELLER
     || data.creditTransactionsSupported !== false;
-  const inactiveStripeAccounts = provider === PROVIDERS.STRIPE
-    ? Object.values(data.accountStatuses || {}).filter((status) => status !== 'active').length
-    : 0;
+  const stripeAccountStatuses = provider === PROVIDERS.STRIPE
+    ? Object.values(data.accountStatuses || {})
+    : [];
+  const inactiveStripeAccounts = stripeAccountStatuses.filter((status) => status === 'inactive').length;
+  const disconnectedStripeAccounts = stripeAccountStatuses.filter((status) => status === 'disconnected').length;
   return {
     itemId: item.item_id,
     externalItemId: item.external_item_id || item.item_id,
@@ -76,7 +78,10 @@ function itemView(item, accounts) {
       : null,
     accountWarning: inactiveStripeAccounts > 0
       ? `${inactiveStripeAccounts} Stripe account(s) need attention. Reconnect the card before relying on new transactions.`
-      : null,
+      : disconnectedStripeAccounts > 0
+        ? `${disconnectedStripeAccounts} Stripe account(s) were disconnected. Unlink this old connection or connect the card again.`
+        : null,
+    relinkRequired: provider === PROVIDERS.STRIPE && inactiveStripeAccounts > 0,
     dataQualityWarning: provider === PROVIDERS.STRIPE
       ? 'Stripe supplies only a bank description here, not structured merchant, category, or MCC data. Automatic matches may need manual confirmation.'
       : null,
@@ -129,6 +134,7 @@ async function handleStripeComplete(env, req, nonce, sessionId, now) {
       ...existingData,
       customerId,
       sessionId: session.id,
+      ...(account.authorization ? { authorizationId: account.authorization } : {}),
       webhookConfigured: stripeInfo.webhookConfigured,
       accountStatuses: {
         ...(existingData.accountStatuses || {}),
@@ -174,6 +180,108 @@ async function handleStripeComplete(env, req, nonce, sessionId, now) {
     webhookConfigured: stripeInfo.webhookConfigured,
     ignoredAccounts: rawAccounts.length - accounts.length,
     signConfirmationRequired: linkedItems.some((item) => item.signConfirmationRequired),
+    subscriptionErrors: linkedItems.flatMap((item) => item.sync?.subscription?.errors || []),
+  };
+}
+
+async function handleStripeRelinkComplete(env, req, itemId, nonce, sessionId, now) {
+  const stripeInfo = stripe.stripeStatus(env);
+  if (!stripeInfo.configured) {
+    throw httpError(503, `Stripe is not configured: ${stripeInfo.missing.join(', ')}`);
+  }
+  const anchorItem = await db.getItem(env.DB, itemId);
+  if (!anchorItem || anchorItem.provider !== PROVIDERS.STRIPE) {
+    throw httpError(404, 'Stripe item not found');
+  }
+  const anchorAccounts = await db.listAccountsByItem(env.DB, itemId);
+  if (anchorAccounts.length !== 1) {
+    throw httpError(409, 'Stripe relink requires exactly one account for the selected connection');
+  }
+
+  // Consume the one-time, session-bound nonce before making any Stripe calls.
+  // A transient failure simply requires starting a fresh relink session.
+  const consumed = await db.consumeLinkNonce(
+    env.DB,
+    await sha256Hex(`${nonce}.${sessionId}.${itemId}`),
+    await sessionHash(req),
+    PROVIDERS.STRIPE
+  );
+  if (!consumed) throw httpError(400, 'Stripe relink nonce is invalid, expired, or already used');
+
+  const session = stripe.validateRelinkedSession(
+    await stripe.retrieveRelinkSession(env, sessionId),
+    sessionId
+  );
+  const profile = await db.getProviderProfile(env.DB, PROVIDERS.STRIPE);
+  const customerId = session.account_holder.customer;
+  if (!profile || profile.external_id !== customerId) {
+    throw httpError(409, 'Stripe session is not bound to this app profile', 'stripe.customer_mismatch');
+  }
+
+  const rawAccounts = await stripe.listSessionAccounts(
+    env,
+    session,
+    stripeInfo.relinkApiVersion
+  );
+  const relinkAuthorization = session.relink_result.authorization;
+  const eligible = stripe.eligibleCreditCardAccounts(rawAccounts).filter(
+    (account) => account.authorization === relinkAuthorization
+  );
+  const reconnectable = [];
+  for (const account of eligible) {
+    const item = await db.getItemByExternal(env.DB, PROVIDERS.STRIPE, account.id);
+    if (item) reconnectable.push({ account, item });
+  }
+  if (reconnectable.length === 0) {
+    throw httpError(409, 'Stripe did not reactivate any linked credit-card accounts');
+  }
+
+  const linkedItems = [];
+  for (const { account, item } of reconnectable) {
+    const existingData = parseProviderData(item);
+    const refreshPending = !account.transaction_refresh
+      || account.transaction_refresh.status === 'pending';
+    const providerData = stripe.relinkedProviderData(existingData, {
+      customerId,
+      sessionId: session.id,
+      authorizationId: relinkAuthorization,
+      webhookConfigured: stripeInfo.webhookConfigured,
+      account,
+      refreshPending,
+    });
+    await db.insertItem(env.DB, {
+      itemId: item.item_id,
+      provider: PROVIDERS.STRIPE,
+      externalItemId: account.id,
+      accessToken: item.access_token,
+      institutionId: item.institution_id,
+      institutionName: account.institution_name || item.institution_name,
+      providerData,
+      createdAt: item.created_at,
+    });
+    const prior = await db.getAccountByExternal(env.DB, PROVIDERS.STRIPE, account.id);
+    await db.upsertAccount(env.DB, stripe.accountRecord(account, item.item_id, prior));
+    const sync = await providers.syncItem(
+      env,
+      await db.getItem(env.DB, item.item_id),
+      { requestRefresh: true }
+    );
+    linkedItems.push({
+      itemId: item.item_id,
+      accountId: account.id,
+      institutionName: account.institution_name,
+      refreshPending: refreshPending || Boolean(sync?.subscription?.refreshPending),
+      sync,
+    });
+  }
+
+  return {
+    reconnected: true,
+    accounts: linkedItems.length,
+    institutionName: [...new Set(linkedItems.map((item) => item.institutionName).filter(Boolean))].join(' / '),
+    refreshPending: linkedItems.some((item) => item.refreshPending),
+    webhookConfigured: stripeInfo.webhookConfigured,
+    ignoredAccounts: rawAccounts.length - linkedItems.length,
     subscriptionErrors: linkedItems.flatMap((item) => item.sync?.subscription?.errors || []),
   };
 }
@@ -474,6 +582,49 @@ async function handle(req, env, ctx) {
     const { nonce, sessionId } = await readJson(req);
     if (!nonce || !sessionId) return { status: 400, error: 'nonce and sessionId required' };
     return handleStripeComplete(env, req, nonce, sessionId, now);
+  }
+
+  const stripeRelinkSessionMatch = path.match(/^\/api\/items\/([^/]+)\/stripe-relink\/session$/);
+  if (stripeRelinkSessionMatch && method === 'POST') {
+    const itemId = decodeId(stripeRelinkSessionMatch[1]);
+    const item = await db.getItem(env.DB, itemId);
+    if (!item || item.provider !== PROVIDERS.STRIPE) throw httpError(404, 'Stripe item not found');
+    const accounts = await db.listAccountsByItem(env.DB, itemId);
+    if (accounts.length !== 1) {
+      throw httpError(409, 'Stripe relink requires exactly one account for the selected connection');
+    }
+    const profile = await db.getProviderProfile(env.DB, PROVIDERS.STRIPE);
+    if (!profile?.external_id) {
+      throw httpError(409, 'Stripe Customer profile is missing', 'stripe.profile_missing');
+    }
+    const nonce = randomToken();
+    const setup = await stripe.createRelinkSession(
+      env,
+      profile.external_id,
+      accounts[0].external_account_id
+    );
+    await db.putLinkNonce(
+      env.DB,
+      await sha256Hex(`${nonce}.${setup.sessionId}.${itemId}`),
+      await sessionHash(req),
+      PROVIDERS.STRIPE,
+      Date.now() + LINK_NONCE_TTL_MS,
+      now()
+    );
+    return {
+      clientSecret: setup.clientSecret,
+      sessionId: setup.sessionId,
+      nonce,
+      publishableKey: stripe.stripeStatus(env).publishableKey,
+    };
+  }
+
+  const stripeRelinkCompleteMatch = path.match(/^\/api\/items\/([^/]+)\/stripe-relink\/complete$/);
+  if (stripeRelinkCompleteMatch && method === 'POST') {
+    const itemId = decodeId(stripeRelinkCompleteMatch[1]);
+    const { nonce, sessionId } = await readJson(req);
+    if (!nonce || !sessionId) return { status: 400, error: 'nonce and sessionId required' };
+    return handleStripeRelinkComplete(env, req, itemId, nonce, sessionId, now);
   }
 
   // ---------------- Teller Connect ----------------

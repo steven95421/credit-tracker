@@ -317,12 +317,19 @@ export default function CardsAccounts({ config, onChange }) {
     })();
   }, [accounts, cards, items, catalog, afterMutation]);
 
-  const connectStripe = async () => {
+  const connectStripe = async (reconnectItem = null) => {
+    const reconnecting = reconnectItem?.provider === 'stripe';
     setBusy(true);
     setErr('');
     setMessage('');
     try {
-      const setup = await api.post('/api/link/stripe/session');
+      const setupPath = reconnecting
+        ? itemPath(reconnectItem.itemId, '/stripe-relink/session')
+        : '/api/link/stripe/session';
+      const completePath = reconnecting
+        ? itemPath(reconnectItem.itemId, '/stripe-relink/complete')
+        : '/api/link/stripe/complete';
+      const setup = await api.post(setupPath);
       const stripeClient = await loadStripe(setup.publishableKey);
       if (!stripeClient) throw new Error('Unable to load Stripe.js');
       const result = await stripeClient.collectFinancialConnectionsAccounts({
@@ -332,13 +339,19 @@ export default function CardsAccounts({ config, onChange }) {
       if (!result.financialConnectionsSession) {
         throw new Error('Stripe did not return a completed Financial Connections session');
       }
-      const linked = await api.post('/api/link/stripe/complete', {
+      const linked = await api.post(completePath, {
         nonce: setup.nonce,
         sessionId: setup.sessionId,
       });
-      const notes = [`Linked ${linked.accounts} Stripe credit-card account(s).`];
-      notes.push('Card products are matched from account names automatically and remain editable under Tracked cards.');
-      notes.push('Purchases default to a negative (−) amount; you can change this later per account.');
+      const notes = [reconnecting
+        ? `Reconnected ${linked.accounts} ${linked.institutionName || 'Stripe'} credit-card account(s).`
+        : `Linked ${linked.accounts} Stripe credit-card account(s).`];
+      if (reconnecting) {
+        notes.push('Existing tracked-card assignments were preserved.');
+      } else {
+        notes.push('Card products are matched from account names automatically and remain editable under Tracked cards.');
+        notes.push('Purchases default to a negative (−) amount; you can change this later per account.');
+      }
       if (linked.ignoredAccounts > 0) notes.push(`${linked.ignoredAccounts} unsupported or inactive account(s) were ignored.`);
       if (linked.refreshPending) notes.push('Stripe is preparing transaction history in the background.');
       if (!linked.webhookConfigured) notes.push('Run Sync after it finishes because the Stripe webhook is not configured yet.');
@@ -346,7 +359,17 @@ export default function CardsAccounts({ config, onChange }) {
       setMessage(notes.join(' '));
       await afterMutation();
     } catch (error) {
-      setErr(error.message);
+      if (reconnecting && error.code === 'stripe.relink_not_needed') {
+        try {
+          await api.post(itemPath(reconnectItem.itemId, '/sync'));
+          setMessage('This Stripe connection is active again. Transactions were checked and the existing card assignment was preserved.');
+          await afterMutation();
+        } catch (syncError) {
+          setErr(syncError.message);
+        }
+      } else {
+        setErr(error.message);
+      }
     } finally {
       setBusy(false);
     }
@@ -610,6 +633,7 @@ export default function CardsAccounts({ config, onChange }) {
 
   const itemsById = new Map(items.map((item) => [item.itemId, item]));
   const institutionGroups = groupLinkedInstitutions(items);
+  const reconnectGroups = institutionGroups.filter((group) => group.reconnectRequiredCount > 0);
   const unmatchedAccounts = unmappedConnectedAccounts(accounts, cards);
   const automaticMatchIds = new Set(
     automaticConnectedCardMatches(accounts, cards, items, catalog)
@@ -655,7 +679,7 @@ export default function CardsAccounts({ config, onChange }) {
           <div className="name">Linked institutions</div>
           <div className="row">
             {stripeConfig?.configured && (
-              <button className="btn primary" disabled={busy} onClick={connectStripe}>
+              <button className="btn primary" disabled={busy} onClick={() => connectStripe()}>
                 + Connect credit card with Stripe
               </button>
             )}
@@ -683,6 +707,28 @@ export default function CardsAccounts({ config, onChange }) {
             Teller Development has 100 total lifetime enrollments. Use Repair on an existing enrollment instead of connecting it again.
           </div>
         )}
+        {reconnectGroups.map((group) => {
+          const reconnectItem = group.items.find((item) => item.relinkRequired);
+          return (
+            <div className="stripe-reconnect-banner" role="status" key={`reconnect:${group.key}`}>
+              <div>
+                <strong>{group.institutionName} stopped syncing</strong>
+                <div className="muted small">
+                  {group.reconnectRequiredCount} card{group.reconnectRequiredCount === 1 ? '' : 's'} need bank authorization again.
+                  Reconnect this bank authorization; existing card products and manual credit settings stay in place.
+                  If the cards were linked separately, repeat until this notice clears.
+                </div>
+              </div>
+              <button
+                className="btn reconnect"
+                disabled={busy || !reconnectItem}
+                onClick={() => connectStripe(reconnectItem)}
+              >
+                Reconnect {group.institutionName}
+              </button>
+            </div>
+          );
+        })}
         {items.length === 0 && (
           <div className="muted small" style={{ paddingTop: 6 }}>No institutions or CSV accounts linked yet.</div>
         )}
@@ -715,6 +761,11 @@ export default function CardsAccounts({ config, onChange }) {
                 <span className="muted small">
                   {group.accounts.length} account{group.accounts.length === 1 ? '' : 's'}
                 </span>
+                {group.reconnectRequiredCount > 0 && (
+                  <span className="badge reconnect-count-badge">
+                    {group.reconnectRequiredCount} need reconnect
+                  </span>
+                )}
                 <span className="institution-chevron" aria-hidden="true">›</span>
               </span>
             </summary>
@@ -736,6 +787,11 @@ export default function CardsAccounts({ config, onChange }) {
                       </div>
                     </div>
                     <div className="row institution-connection-actions">
+                      {item.provider === 'stripe' && item.relinkRequired && (
+                        <button className="btn reconnect" disabled={busy} onClick={() => connectStripe(item)}>
+                          Reconnect
+                        </button>
+                      )}
                       {item.provider === 'teller' && (
                         <button className="btn" disabled={busy || Boolean(tellerSetup)} onClick={() => startTeller(item.itemId)}>
                           Repair

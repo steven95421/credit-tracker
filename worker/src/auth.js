@@ -18,6 +18,13 @@ function hmacKey(env, usages) {
 
 export const devMode = (env) => env.DEV_MODE === '1';
 
+export function allowedEmails(env) {
+  return [env.ALLOWED_EMAIL, env.ADDITIONAL_ALLOWED_EMAILS]
+    .flatMap((value) => String(value || '').toLowerCase().split(','))
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 /** token = b64url(`${expiryMs}.${email}`) + '.' + b64url(HMAC) */
 export async function makeSession(env, email) {
   if (!env.SESSION_SECRET) {
@@ -55,7 +62,7 @@ export async function verifyGoogleCredential(env, credential) {
   const info = await r.json();
   if (info.aud !== env.GOOGLE_CLIENT_ID) return { ok: false, error: 'Sign-in token belongs to a different OAuth client' };
   if (String(info.email_verified) !== 'true') return { ok: false, error: 'Google account email is not verified' };
-  const allowed = (env.ALLOWED_EMAIL || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
+  const allowed = allowedEmails(env);
   const email = String(info.email || '').toLowerCase();
   if (!allowed.includes(email)) return { ok: false, error: `${info.email} is not on the allowlist` };
   return { ok: true, email: info.email };

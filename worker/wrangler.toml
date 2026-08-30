@@ -21,6 +21,9 @@ database_id = "6e28f89a-1246-4f4f-9cff-4933b96506cd"
 # browser, but is installation-specific; add it here or in worker/.dev.vars:
 # STRIPE_PUBLISHABLE_KEY = "pk_test_..."
 STRIPE_API_VERSION = "2026-08-26.dahlia"
+# Financial Connections Relink remains a public-preview API. It is isolated to
+# relink requests; ordinary transaction calls continue using the stable version.
+STRIPE_RELINK_API_VERSION = "2026-08-26.preview"
 STRIPE_COUNTRY_CODES = "US"
 APP_TIME_ZONE = "America/Los_Angeles"
 
@@ -57,6 +60,7 @@ SESSION_TTL_DAYS = "30"
 # Secrets — set these with `npx wrangler secret put <NAME>`, never in this file:
 #   STRIPE_SECRET_KEY       (sk_test_... while testing; use sk_live_... only after registration)
 #   STRIPE_WEBHOOK_SECRET   (whsec_... for POST /api/webhooks/stripe)
+#   ADDITIONAL_ALLOWED_EMAILS (optional comma-separated extra Google accounts)
 #   TELLER_TOKEN_SIGNING_KEY  (public Token Signing Key from Teller dashboard)
 #   TOKEN_ENCRYPTION_KEY      (long random secret used to encrypt access tokens in D1)
 #   PLAID_CLIENT_ID   (from dashboard.plaid.com/developers/keys)

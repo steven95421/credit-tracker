@@ -115,6 +115,7 @@ export function groupLinkedInstitutions(items) {
         neverSyncedCount: 0,
         refreshPending: false,
         needsAttention: false,
+        reconnectRequiredCount: 0,
       };
       groups.set(key, group);
     }
@@ -130,6 +131,9 @@ export function groupLinkedInstitutions(items) {
       group.neverSyncedCount += 1;
     }
     group.refreshPending ||= Boolean(item.refreshPending);
+    if (item.relinkRequired) {
+      group.reconnectRequiredCount += Math.max(1, item.accounts?.length || 0);
+    }
     group.needsAttention ||= Boolean(
       item.capabilityWarning || item.subscriptionWarning || item.accountWarning
     );

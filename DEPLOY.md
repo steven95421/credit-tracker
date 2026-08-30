@@ -62,6 +62,8 @@ Set secrets from `worker/`:
 ```bash
 npx wrangler secret put SESSION_SECRET
 npx wrangler secret put ALLOWED_EMAIL
+# Optional: add collaborators without replacing the primary allowlist secret.
+npx wrangler secret put ADDITIONAL_ALLOWED_EMAILS
 npx wrangler secret put TOKEN_ENCRYPTION_KEY
 ```
 
@@ -71,7 +73,8 @@ unreadable. Existing Plaid plaintext rows remain readable during migration; new 
 encrypted before D1 storage.
 
 Set `GOOGLE_CLIENT_ID` and `ALLOWED_ORIGINS` in `wrangler.toml`. The OAuth client ID is public; the
-allowed email and session/encryption keys are not.
+allowed emails and session/encryption keys are not. Both email secrets accept comma-separated lists;
+the Worker merges them before checking Google Sign-In.
 
 ## 4. Stripe Financial Connections (primary)
 

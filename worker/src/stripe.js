@@ -11,6 +11,10 @@ import {
 
 const API_BASE = 'https://api.stripe.com/v1';
 const DEFAULT_API_VERSION = '2026-08-26.dahlia';
+// Financial Connections Relink is a public-preview API. Keep its version
+// separate from the stable transaction API so the rest of the integration does
+// not silently opt into preview response shapes.
+const DEFAULT_RELINK_API_VERSION = '2026-08-26.preview';
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
 const WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
@@ -51,6 +55,7 @@ export function stripeStatus(env) {
     publishableKey: env.STRIPE_PUBLISHABLE_KEY || '',
     webhookConfigured: Boolean(env.STRIPE_WEBHOOK_SECRET),
     apiVersion: env.STRIPE_API_VERSION || DEFAULT_API_VERSION,
+    relinkApiVersion: env.STRIPE_RELINK_API_VERSION || DEFAULT_RELINK_API_VERSION,
     missing,
   };
 }
@@ -80,7 +85,7 @@ async function stripeRequest(env, path, options = {}) {
     headers: {
       Accept: 'application/json',
       Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
-      'Stripe-Version': status.apiVersion,
+      'Stripe-Version': options.apiVersion || status.apiVersion,
       ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
       ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}),
     },
@@ -146,8 +151,81 @@ export async function createSession(env, idempotencySeed, existingCustomerId = n
   };
 }
 
+export const retrieveRelinkAccount = (env, externalAccountId) =>
+  stripeRequest(env, `/financial_connections/accounts/${encodeURIComponent(externalAccountId)}`, {
+    apiVersion: stripeStatus(env).relinkApiVersion,
+  });
+
+export async function createRelinkSession(env, existingCustomerId, externalAccountId) {
+  if (!existingCustomerId || !externalAccountId) {
+    throw stripeError(400, 'Stripe relink requires an existing Customer and account');
+  }
+  const apiVersion = stripeStatus(env).relinkApiVersion;
+  const account = await retrieveRelinkAccount(env, externalAccountId);
+  if (account.account_holder?.type !== 'customer'
+      || account.account_holder.customer !== existingCustomerId) {
+    throw stripeError(
+      409,
+      'Stripe account is not bound to this app profile',
+      'stripe.customer_mismatch'
+    );
+  }
+  if (account.status !== 'inactive') {
+    throw stripeError(409, 'This Stripe account no longer needs to be reconnected', 'stripe.relink_not_needed');
+  }
+  const action = account.status_details?.inactive?.action;
+  if (action !== 'relink_required') {
+    throw stripeError(
+      409,
+      action === 'none'
+        ? 'Stripe says this inactive account cannot be reconnected yet'
+        : 'Stripe did not mark this inactive account as eligible for relinking',
+      'stripe.relink_unavailable'
+    );
+  }
+  if (!account.authorization) {
+    throw stripeError(
+      409,
+      'Stripe did not return the authorization required to reconnect this account',
+      'stripe.relink_authorization_missing'
+    );
+  }
+
+  const countries = String(env.STRIPE_COUNTRY_CODES || 'US')
+    .split(',')
+    .map((country) => country.trim().toUpperCase())
+    .filter(Boolean);
+  const session = await stripeRequest(env, '/financial_connections/sessions', {
+    method: 'POST',
+    apiVersion,
+    params: {
+      'account_holder[type]': 'customer',
+      'account_holder[customer]': existingCustomerId,
+      'permissions[]': ['transactions'],
+      'prefetch[]': ['transactions'],
+      'filters[account_subcategories][]': ['credit_card'],
+      'filters[countries][]': countries,
+      // Relink the authorization rather than one account. Several cards from
+      // the same bank commonly share it, so one consent flow can repair them.
+      'relink_options[authorization]': account.authorization,
+    },
+  });
+  return {
+    clientSecret: session.client_secret,
+    customerId: existingCustomerId,
+    sessionId: session.id,
+    authorizationId: account.authorization,
+    accountId: account.id,
+  };
+}
+
 export const retrieveSession = (env, sessionId) =>
   stripeRequest(env, `/financial_connections/sessions/${encodeURIComponent(sessionId)}`);
+
+export const retrieveRelinkSession = (env, sessionId) =>
+  stripeRequest(env, `/financial_connections/sessions/${encodeURIComponent(sessionId)}`, {
+    apiVersion: stripeStatus(env).relinkApiVersion,
+  });
 
 export function validateCollectedSession(session, expectedSessionId) {
   if (session?.object !== 'financial_connections.session' || session.id !== expectedSessionId) {
@@ -169,6 +247,54 @@ export function validateCollectedSession(session, expectedSessionId) {
   return session;
 }
 
+export function validateRelinkedSession(session, expectedSessionId) {
+  validateCollectedSession(session, expectedSessionId);
+  if (!session.relink_options?.authorization) {
+    throw stripeError(
+      409,
+      'Stripe did not return a Financial Connections relink session',
+      'stripe.relink_session_invalid'
+    );
+  }
+  if (!session.relink_result?.authorization) {
+    const failure = session.relink_result?.failure_reason;
+    const suffix = failure ? ` (${failure})` : '';
+    throw stripeError(
+      409,
+      `Stripe account reconnection was not completed${suffix}`,
+      'stripe.relink_incomplete'
+    );
+  }
+  return session;
+}
+
+export function relinkedProviderData(existingData, {
+  customerId,
+  sessionId,
+  authorizationId,
+  webhookConfigured,
+  account,
+  refreshPending,
+}) {
+  return {
+    ...existingData,
+    customerId,
+    sessionId,
+    authorizationId,
+    webhookConfigured,
+    accountStatuses: {
+      ...(existingData.accountStatuses || {}),
+      [account.id]: account.status,
+    },
+    refreshPending,
+    // A new authorization needs a fresh daily-transaction subscription even
+    // when the old authorization had subscribed successfully. Keep prior
+    // errors until subscribeItem records the outcome of this new attempt.
+    transactionsSubscribed: false,
+    transactionSubscriptions: {},
+  };
+}
+
 export const eligibleCreditCardAccounts = (accounts) => (accounts || []).filter((account) =>
   account.subcategory === 'credit_card'
     && account.status === 'active'
@@ -176,12 +302,13 @@ export const eligibleCreditCardAccounts = (accounts) => (accounts || []).filter(
     && account.permissions.includes('transactions')
 );
 
-export async function listSessionAccounts(env, session) {
+export async function listSessionAccounts(env, session, apiVersion = null) {
   const accounts = [...(session?.accounts?.data || [])];
   if (!session?.accounts?.has_more) return accounts;
   let startingAfter = accounts.at(-1)?.id;
   for (let page = 0; page < MAX_PAGES && startingAfter; page++) {
     const response = await stripeRequest(env, '/financial_connections/accounts', {
+      apiVersion,
       params: { session: session.id, limit: PAGE_SIZE, starting_after: startingAfter },
     });
     const rows = Array.isArray(response.data) ? response.data : [];

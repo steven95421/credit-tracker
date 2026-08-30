@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import {
   accountRecord,
+  createRelinkSession,
   createSession,
   effectiveChargeSign,
   eligibleCreditCardAccounts,
   normalizeTransaction,
+  relinkedProviderData,
   stripeStatus,
   validateCollectedSession,
+  validateRelinkedSession,
   validateWebhookMode,
   verifyWebhook,
 } from '../worker/src/stripe.js';
@@ -87,6 +90,67 @@ test('Stripe Session asks only for credit-card transactions and prefetches them'
   }
 });
 
+test('Stripe Relink targets the existing authorization with the preview API', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    if (String(url).includes('/financial_connections/accounts/')) {
+      return Response.json({
+        id: 'fca_inactive',
+        object: 'financial_connections.account',
+        account_holder: { type: 'customer', customer: 'cus_durable' },
+        authorization: 'fcauth_amex',
+        status: 'inactive',
+        status_details: { inactive: { action: 'relink_required' } },
+      });
+    }
+    return Response.json({
+      id: 'fcsess_relink',
+      client_secret: 'fcsess_client_secret_relink',
+    });
+  };
+  try {
+    const result = await createRelinkSession(
+      testEnv,
+      'cus_durable',
+      'fca_inactive'
+    );
+    assert.equal(result.sessionId, 'fcsess_relink');
+    assert.equal(result.authorizationId, 'fcauth_amex');
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].init.headers['Stripe-Version'], '2026-08-26.preview');
+    assert.equal(calls[1].init.headers['Stripe-Version'], '2026-08-26.preview');
+    const body = new URLSearchParams(calls[1].init.body);
+    assert.equal(body.get('account_holder[customer]'), 'cus_durable');
+    assert.equal(body.get('relink_options[authorization]'), 'fcauth_amex');
+    assert.equal(body.has('relink_options[account]'), false);
+    assert.deepEqual(body.getAll('permissions[]'), ['transactions']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Stripe Relink refuses inactive accounts Stripe did not mark as relinkable', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    id: 'fca_inactive',
+    object: 'financial_connections.account',
+    account_holder: { type: 'customer', customer: 'cus_durable' },
+    authorization: 'fcauth_amex',
+    status: 'inactive',
+    status_details: { inactive: { action: 'none' } },
+  });
+  try {
+    await assert.rejects(
+      createRelinkSession(testEnv, 'cus_durable', 'fca_inactive'),
+      /cannot be reconnected yet/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('Stripe completion validates collected accounts without relying on a nonexistent Session status', () => {
   const session = {
     id: 'fcsess_test',
@@ -105,6 +169,70 @@ test('Stripe completion validates collected accounts without relying on a nonexi
     () => validateCollectedSession({ ...session, id: 'fcsess_other' }, 'fcsess_test'),
     /expected Financial Connections session/
   );
+});
+
+test('Stripe relink completion accepts a newly minted authorization', () => {
+  const session = {
+    id: 'fcsess_relink',
+    object: 'financial_connections.session',
+    account_holder: { type: 'customer', customer: 'cus_durable' },
+    permissions: ['transactions'],
+    filters: { account_subcategories: ['credit_card'], countries: ['US'] },
+    relink_options: { authorization: 'fcauth_amex' },
+    relink_result: { authorization: 'fcauth_reconsented' },
+  };
+  assert.equal(
+    validateRelinkedSession(session, 'fcsess_relink'),
+    session
+  );
+  assert.throws(
+    () => validateRelinkedSession({ ...session, relink_options: {} }, 'fcsess_relink'),
+    /did not return a Financial Connections relink session/
+  );
+  assert.throws(
+    () => validateRelinkedSession({
+      ...session,
+      relink_result: { failure_reason: 'no_authorization' },
+    }, 'fcsess_relink'),
+    /was not completed/
+  );
+});
+
+test('Stripe relink resets subscriptions while preserving card identity inputs and settings', () => {
+  const existingData = {
+    chargeSign: 'positive',
+    transactionsSubscribed: true,
+    transactionSubscriptions: { fca_amex: true },
+    subscriptionErrors: [{ accountId: 'fca_amex', error: 'old failure' }],
+    manualSetting: 'keep-me',
+  };
+  const next = relinkedProviderData(existingData, {
+    customerId: 'cus_durable',
+    sessionId: 'fcsess_relink',
+    authorizationId: 'fcauth_reconsented',
+    webhookConfigured: true,
+    account: { id: 'fca_amex', status: 'active' },
+    refreshPending: true,
+  });
+  assert.equal(next.chargeSign, 'positive');
+  assert.equal(next.manualSetting, 'keep-me');
+  assert.equal(next.authorizationId, 'fcauth_reconsented');
+  assert.equal(next.transactionsSubscribed, false);
+  assert.deepEqual(next.transactionSubscriptions, {});
+  assert.deepEqual(next.subscriptionErrors, existingData.subscriptionErrors);
+  assert.equal(next.accountStatuses.fca_amex, 'active');
+
+  const prior = { account_id: 'stable-local-account-id' };
+  const record = accountRecord({
+    id: 'fca_amex',
+    display_name: 'Platinum Card',
+    institution_name: 'American Express',
+    last4: '1001',
+    category: 'credit',
+    subcategory: 'credit_card',
+  }, 'stable-item-id', prior);
+  assert.equal(record.accountId, 'stable-local-account-id');
+  assert.equal(record.itemId, 'stable-item-id');
 });
 
 test('Stripe credit-card debits become canonical positive purchases', () => {

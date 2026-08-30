@@ -122,6 +122,10 @@ button.btn {
 }
 button.btn:hover { border-color: var(--accent); }
 button.btn.primary { background: var(--accent); border-color: var(--accent); color: #0b1020; font-weight: 600; }
+button.btn.reconnect {
+  background: var(--amber); border-color: var(--amber); color: #161006; font-weight: 700;
+}
+button.btn.reconnect:hover { filter: brightness(1.08); border-color: var(--amber); }
 button.btn.danger:hover { border-color: var(--red); color: var(--red); }
 button.btn:disabled { opacity: 0.5; cursor: default; }
 
@@ -256,6 +260,7 @@ select, .text-input {
   white-space: nowrap;
 }
 .institution-attention-badge { color: var(--amber); }
+.reconnect-count-badge { color: var(--amber); border-color: var(--amber); white-space: nowrap; }
 .institution-last-synced { display: block; margin-top: 2px; }
 .institution-summary-side {
   display: flex;
@@ -296,6 +301,14 @@ select, .text-input {
   border: 1px solid color-mix(in srgb, var(--amber) 55%, var(--border));
   border-radius: 10px; padding: 10px 12px; margin-top: 10px; font-size: 13px;
 }
+.stripe-reconnect-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin: 12px 0; padding: 13px 14px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--amber) 15%, var(--panel)), var(--panel));
+  border: 1px solid var(--amber); border-radius: 12px;
+}
+.stripe-reconnect-banner strong { color: var(--amber); }
+.stripe-reconnect-banner .btn { flex: 0 0 auto; }
 .sign-actions { margin-top: 8px; }
 .stripe-sign-setting {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
@@ -395,6 +408,9 @@ select, .text-input {
   .card-progress-heading { align-items: center; }
   .card-usage-totals { gap: 12px; }
   .sample-row { grid-template-columns: 76px minmax(0, 1fr) auto; gap: 6px; }
+  .stripe-reconnect-banner { align-items: stretch; flex-direction: column; }
+  .stripe-reconnect-banner .btn { width: 100%; }
+  .institution-summary-side .reconnect-count-badge { display: none; }
   .csv-grid > select, .csv-grid > .file-input { width: 100%; max-width: none; }
   .pending-account { grid-template-columns: 1fr; }
   .pending-account-actions { justify-content: stretch; }

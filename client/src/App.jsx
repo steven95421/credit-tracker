@@ -82,17 +82,32 @@ export default function App() {
   const remoteSyncConfigured = Boolean(
     stripeConfig?.configured || tellerConfig?.configured || plaidConfig?.configured
   );
+  const configuredProviderLabels = [
+    ['Stripe', stripeConfig],
+    ['Teller', tellerConfig],
+    ['Plaid', plaidConfig],
+  ]
+    .filter(([, provider]) => provider?.configured)
+    .map(([label, provider]) => `${label}: ${provider.environment || 'configured'}`);
   const publicUrl = (page) => `${import.meta.env.BASE_URL}${page}`;
 
   return (
     <div className="app">
       <header className="top">
-        <h1>💳 Credit Tracker</h1>
-        {config && (
+        <h1>
+          <button
+            type="button"
+            className="brand-home"
+            aria-label="Credit Tracker — go to dashboard"
+            onClick={() => setTab('dashboard')}
+          >
+            <span aria-hidden="true">💳</span>
+            <span>Credit Tracker</span>
+          </button>
+        </h1>
+        {config && configuredProviderLabels.length > 0 && (
           <span className="env-pill">
-            Stripe: {stripeConfig?.configured ? stripeConfig.environment : 'not configured'}
-            {' · '}Teller: {tellerConfig?.configured ? tellerConfig.environment : 'not configured'}
-            {' · '}Plaid: {plaidConfig?.configured ? plaidConfig.environment : 'not configured'}
+            {configuredProviderLabels.join(' · ')}
           </span>
         )}
       </header>
